@@ -1,3 +1,4 @@
+# app/schemas.py (新增知识库相关schemas)
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
@@ -38,6 +39,7 @@ class CharacterCreate(BaseModel):
     voice_id: str = "zh-CN-XiaoxiaoNeural"  # 默认Edge-TTS声音
     prompt_template: str
     settings: dict = {}
+    use_rag: bool = False  # 新增：是否使用RAG
 
 
 class CharacterResponse(BaseModel):
@@ -47,9 +49,32 @@ class CharacterResponse(BaseModel):
     avatar_url: Optional[str]
     voice_id: str
     created_at: datetime
+    use_rag: bool = False  # 新增
 
     class Config:
         from_attributes = True
+
+
+# 知识库相关 - 新增
+class KnowledgeCreate(BaseModel):
+    texts: List[str]
+
+
+class KnowledgeResponse(BaseModel):
+    character_id: int
+    status: str
+    message: str
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+class KnowledgeSearchResponse(BaseModel):
+    query: str
+    character_id: int
+    results: List[str]
 
 
 # 对话相关

@@ -1,3 +1,4 @@
+# app/models.py (更新版本，新增use_rag字段)
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -28,6 +29,7 @@ class Character(Base):
     settings = Column(JSON, default={})  # 额外的角色设置
     created_at = Column(DateTime, default=datetime.utcnow)
     is_public = Column(Boolean, default=True)
+    use_rag = Column(Boolean, default=False)  # 新增：是否启用RAG功能
 
     conversations = relationship("Conversation", back_populates="character", lazy="selectin")
 

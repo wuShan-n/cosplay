@@ -1,0 +1,174 @@
+# RAG功能使用指南
+
+## 概述
+
+已为你的AI角色扮演网站成功集成了基于LangChain的RAG（检索增强生成）功能。每个角色现在都可以拥有自己的知识库，让AI回答更加准确和专业。
+
+## 新增功能
+
+### 1. 角色知识库管理
+- 每个角色可以单独配置知识库
+- 支持上传多种格式文件：PDF、Markdown、JSON、纯文本
+- 支持直接添加文本内容
+- 自动文档分割和向量化存储
+
+### 2. RAG集成聊天
+- AI回答时自动搜索相关知识
+- 基于知识库内容提供准确回答
+- 保持角色特色的同时确保信息准确性
+
+### 3. 知识库管理API
+- 上传文件到知识库
+- 添加文本知识
+- 搜索知识库内容
+- 获取知识库摘要
+- 删除知识库
+
+## API使用示例
+
+### 1. 为角色上传知识库文件
+
+```bash
+curl -X POST http://localhost:8000/api/v1/knowledge/1/upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "files=@harry_potter_book1.pdf" \
+  -F "files=@hogwarts_guide.txt" \
+  -F "texts=霍格沃茨是一所魔法学校" \
+  -F "texts=哈利波特是格兰芬多学院的学生"
+```
+
+### 2. 添加文本知识
+
+```bash
+curl -X POST http://localhost:8000/api/v1/knowledge/1/add-text \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": [
+      "魔法棒是巫师最重要的工具",
+      "每个魔法棒都是独一无二的",
+      "哈利的魔法棒是冬青木配凤凰羽毛"
+    ]
+  }'
+```
+
+### 3. 搜索知识库
+
+```bash
+curl -X GET "http://localhost:8000/api/v1/knowledge/1/search?query=霍格沃茨&k=5" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 4. 获取知识库摘要
+
+```bash
+curl -X GET http://localhost:8000/api/v1/knowledge/1/summary \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 5. 检查知识库状态
+
+```bash
+curl -X GET http://localhost:8000/api/v1/knowledge/1/status \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+## 安装和配置
+
+### 1. 安装新依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. 数据库迁移
+由于`Character`模型新增了`use_rag`字段，需要更新数据库：
+
+```sql
+-- 如果使用PostgreSQL
+ALTER TABLE characters ADD COLUMN use_rag BOOLEAN DEFAULT FALSE;
+```
+
+### 3. 初始化示例数据
+
+```bash
+python init_characters.py
+```
+
+这会创建三个启用RAG的示例角色：哈利波特、苏格拉底、爱因斯坦，并为它们添加相应的知识库内容。
+
+## WebSocket聊天测试
+
+使用提供的`wb.html`测试页面，连接到启用RAG的角色对话。AI会自动：
+1. 搜索角色知识库中的相关信息
+2. 结合知识库内容生成回答
+3. 保持角色的语言风格和性格特点
+
+## 技术架构
+
+### 核心组件
+1. **RAGService** - 知识库管理核心服务
+2. **向量数据库** - 使用ChromaDB存储文档向量
+3. **文本嵌入** - 使用多语言MiniLM模型
+4. **文档分割** - 智能分割长文档
+5. **LLM集成** - 无缝集成通义千问
+
+### 存储结构
+```
+project/
+├── knowledge_bases/     # 原始知识文件
+│   ├── 1/              # 角色1的知识文件
+│   └── 2/              # 角色2的知识文件
+├── vector_dbs/         # 向量数据库
+│   ├── 1/              # 角色1的向量DB
+│   └── 2/              # 角色2的向量DB
+└── temp_uploads/       # 临时上传文件
+```
+
+## 最佳实践
+
+### 1. 知识库内容建议
+- **结构化信息**：角色背景、设定、关系
+- **专业知识**：相关领域的准确信息
+- **常见问答**：用户可能询问的内容
+- **角色语录**：保持语言风格一致性
+
+### 2. 文件格式支持
+- **PDF**：书籍、论文、长文档
+- **Markdown**：结构化文本
+- **JSON**：结构化数据
+- **TXT**：纯文本内容
+
+### 3. 性能优化
+- 向量数据库会自动缓存在内存中
+- 支持增量更新，无需重建整个知识库
+- 文档分割参数已优化中文内容
+
+### 4. 角色配置
+创建角色时设置`use_rag=True`来启用RAG功能：
+
+```python
+character = Character(
+    name="角色名",
+    use_rag=True,  # 启用RAG
+    prompt_template="角色提示词... 请结合提供的背景知识回答问题。"
+)
+```
+
+## 注意事项
+
+1. **首次运行**：会自动下载embedding模型（约400MB）
+2. **文件大小**：单个文件建议不超过50MB
+3. **知识质量**：确保知识库内容的准确性
+4. **提示词设计**：在角色prompt中引导AI使用知识库信息
+
+## 扩展功能
+
+该RAG实现预留了扩展接口，可以轻松添加：
+- 更多文档格式支持
+- 不同的向量数据库
+- 高级检索策略
+- 知识图谱集成
+- 多模态内容支持
+
+现在你的AI角色可以基于专门的知识库提供更准确、更专业的回答了！

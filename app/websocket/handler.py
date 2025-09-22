@@ -1,3 +1,4 @@
+# app/websocket/handler.py (更新版本，集成RAG功能)
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -98,11 +99,13 @@ async def handle_websocket(
                     # 添加到历史
                     message_history.append({"role": "user", "content": user_content})
 
-                    # 生成AI回复
+                    # 生成AI回复（支持RAG）
                     ai_content = ""
                     async for chunk in LLMService.generate_response(
                             messages=message_history[-10:],  # 只使用最近10条
-                            character_prompt=character.prompt_template
+                            character_prompt=character.prompt_template,
+                            character_id=character.id if character.use_rag else None,  # 根据设置决定是否使用RAG
+                            use_rag=character.use_rag
                     ):
                         ai_content += chunk
                         await manager.send_message({
@@ -163,11 +166,13 @@ async def handle_websocket(
                     # 添加到历史
                     message_history.append({"role": "user", "content": user_content})
 
-                    # 生成AI回复
+                    # 生成AI回复（支持RAG）
                     ai_content = ""
                     async for chunk in LLMService.generate_response(
                             messages=message_history[-10:],  # 只使用最近10条
-                            character_prompt=character.prompt_template
+                            character_prompt=character.prompt_template,
+                            character_id=character.id if character.use_rag else None,  # 根据设置决定是否使用RAG
+                            use_rag=character.use_rag
                     ):
                         ai_content += chunk
                         await manager.send_message({

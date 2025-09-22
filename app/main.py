@@ -35,6 +35,9 @@ app.include_router(auth.router, prefix=settings.API_PREFIX)
 app.include_router(characters.router, prefix=settings.API_PREFIX)
 app.include_router(chat.router, prefix=settings.API_PREFIX)
 
+app.include_router(knowledge.router, prefix=settings.API_PREFIX)  # 新增知识库路由
+
+
 @app.get("/")
 async def root():
     return {"message": "AI Roleplay API is running"}
