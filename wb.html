@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 角色扮演 WebSocket 测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+            margin: 0;
+            padding: 20px;
+            background-color: #f7f7f7;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            text-align: center;
+            color: #444;
+        }
+        .control-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-right: 10px;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .record-btn.recording {
+            background-color: #dc3545;
+        }
+        .record-btn.recording:hover {
+            background-color: #b02a37;
+        }
+        #status {
+            font-weight: bold;
+        }
+        #log {
+            height: 400px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+        #audioPlayer {
+            width: 100%;
+            margin-top: 15px;
+        }
+        .log-entry {
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 8px;
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        .log-meta {
+            font-size: 0.8em;
+            color: #888;
+            font-weight: bold;
+        }
+        .user-msg { color: #0056b3; }
+        .ai-msg { color: #28a745; }
+        .system-msg { color: #6c757d; }
+        .error-msg { color: #dc3545; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>WebSocket 测试客户端</h1>
+
+    <div class="control-group">
+        <h2>1. 连接</h2>
+        <label for="conversationId">会话 ID:</label>
+        <input type="text" id="conversationId" value="1">
+        <br><br>
+        <button id="connectBtn">连接</button>
+        <button id="disconnectBtn" disabled>断开连接</button>
+        <p>状态: <span id="status">未连接</span></p>
+    </div>
+
+    <div class="control-group">
+        <h2>2. 发送消息</h2>
+        <label for="message">消息:</label>
+        <textarea id="message" placeholder="在此输入您的消息..."></textarea>
+        <br><br>
+        <input type="checkbox" id="needAudio" checked>
+        <label for="needAudio">请求语音</label>
+        <br><br>
+        <button id="sendTextBtn" disabled>发送文本</button>
+        <button id="recordBtn" class="record-btn" disabled>录制音频</button>
+    </div>
+
+    <div class="control-group">
+        <h2>3. 日志</h2>
+        <div id="log"></div>
+        <audio id="audioPlayer" controls></audio>
+    </div>
+</div>
+
+<script>
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const sendTextBtn = document.getElementById('sendTextBtn');
+    const recordBtn = document.getElementById('recordBtn');
+    const conversationIdInput = document.getElementById('conversationId');
+    const messageInput = document.getElementById('message');
+    const needAudioCheckbox = document.getElementById('needAudio');
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const audioPlayer = document.getElementById('audioPlayer');
+
+    let ws = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+
+    function logMessage(type, content) {
+        const entry = document.createElement('div');
+        entry.classList.add('log-entry');
+
+        const meta = document.createElement('span');
+        meta.classList.add('log-meta');
+
+        const text = document.createElement('span');
+
+        switch (type) {
+            case 'USER':
+                meta.textContent = '您: ';
+                text.classList.add('user-msg');
+                break;
+            case 'AI':
+                meta.textContent = 'AI: ';
+                text.classList.add('ai-msg');
+                return; // AI 消息由 appendToLastLog 处理
+            case 'TRANSCRIPTION':
+                meta.textContent = '语音转写: ';
+                text.classList.add('user-msg');
+                break;
+            case 'SYSTEM':
+                meta.textContent = '系统: ';
+                text.classList.add('system-msg');
+                break;
+            case 'ERROR':
+                meta.textContent = '错误: ';
+                text.classList.add('error-msg');
+                break;
+        }
+
+        text.textContent = content;
+        entry.appendChild(meta);
+        entry.appendChild(text);
+        logEl.appendChild(entry);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function appendToLastLog(chunk) {
+        let lastEntry = logEl.lastElementChild;
+        // 检查最后一条日志是否来自 AI，如果不是，则创建新条目
+        if (!lastEntry || !lastEntry.querySelector('.ai-msg')) {
+            lastEntry = document.createElement('div');
+            lastEntry.classList.add('log-entry');
+            const meta = document.createElement('span');
+            meta.classList.add('log-meta');
+            meta.textContent = 'AI: ';
+            const text = document.createElement('span');
+            text.classList.add('ai-msg');
+            lastEntry.appendChild(meta);
+            lastEntry.appendChild(text);
+            logEl.appendChild(lastEntry);
+        }
+
+        const textSpan = lastEntry.querySelector('.ai-msg');
+        textSpan.textContent += chunk;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+
+    function updateUIState(isConnected) {
+        connectBtn.disabled = isConnected;
+        disconnectBtn.disabled = !isConnected;
+        sendTextBtn.disabled = !isConnected;
+        recordBtn.disabled = !isConnected;
+        conversationIdInput.disabled = isConnected;
+        statusEl.textContent = isConnected ? '已连接' : '未连接';
+        statusEl.style.color = isConnected ? 'green' : 'red';
+    }
+
+    connectBtn.onclick = () => {
+        const conversationId = conversationIdInput.value.trim();
+        if (!conversationId) {
+            alert('请输入会话 ID。');
+            return;
+        }
+
+        const wsUrl = `ws://localhost:8000/ws/${conversationId}`;
+        logMessage('SYSTEM', `正在连接到 ${wsUrl}...`);
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            logMessage('SYSTEM', '已连接到 WebSocket。');
+            updateUIState(true);
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.error) {
+                    logMessage('ERROR', data.error);
+                    return;
+                }
+
+                switch (data.type) {
+                    case 'text_stream':
+                        appendToLastLog(data.content);
+                        break;
+                    case 'transcription':
+                        logMessage('TRANSCRIPTION', data.content);
+                        break;
+                    case 'audio':
+                        logMessage('SYSTEM', `收到音频 URL: ${data.url}`);
+                        audioPlayer.src = data.url;
+                        audioPlayer.play();
+                        break;
+                    default:
+                        logMessage('SYSTEM', `收到未知消息类型: ${JSON.stringify(data)}`);
+                }
+            } catch (e) {
+                logMessage('ERROR', `解析消息失败: ${event.data}`);
+                console.error(e);
+            }
+        };
+
+        ws.onclose = () => {
+            logMessage('SYSTEM', 'WebSocket 连接已关闭。');
+            updateUIState(false);
+            ws = null;
+        };
+
+        ws.onerror = (error) => {
+            logMessage('ERROR', 'WebSocket 错误。请查看控制台了解详情。');
+            console.error('WebSocket Error:', error);
+            updateUIState(false);
+            ws = null;
+        };
+    };
+
+    disconnectBtn.onclick = () => {
+        if (ws) {
+            ws.close();
+        }
+    };
+
+    sendTextBtn.onclick = () => {
+        const content = messageInput.value.trim();
+        if (!content) {
+            alert('消息不能为空。');
+            return;
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const message = {
+                type: 'text',
+                content: content,
+                need_audio: needAudioCheckbox.checked
+            };
+            ws.send(JSON.stringify(message));
+            logMessage('USER', content);
+            messageInput.value = '';
+        } else {
+            logMessage('ERROR', 'WebSocket 尚未连接。');
+        }
+    };
+
+    recordBtn.onclick = async () => {
+        if (isRecording) {
+            // 停止录音
+            mediaRecorder.stop();
+            recordBtn.textContent = '录制音频';
+            recordBtn.classList.remove('recording');
+            isRecording = false;
+        } else {
+            // 开始录音
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64String = reader.result.split(',')[1];
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const message = {
+                                type: 'audio',
+                                data: base64String
+                            };
+                            ws.send(JSON.stringify(message));
+                            logMessage('SYSTEM', '已发送音频数据。');
+                        } else {
+                            logMessage('ERROR', 'WebSocket 尚未连接。');
+                        }
+                    };
+                    reader.readAsDataURL(audioBlob);
+                };
+
+                mediaRecorder.start();
+                logMessage('SYSTEM', '录音已开始...');
+                recordBtn.textContent = '停止并发送';
+                recordBtn.classList.add('recording');
+                isRecording = true;
+            } catch (e) {
+                logMessage('ERROR', '无法开始录音。请授予麦克风权限。');
+                console.error('无法开始录音:', e);
+            }
+        }
+    };
+
+    // 初始化 UI 状态
+    updateUIState(false);
+</script>
+
+</body>
+</html>

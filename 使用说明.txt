@@ -1,0 +1,139 @@
+
+## 使用说明
+
+1. **安装依赖**
+```bash
+pip install -r requirements.txt
+```
+
+2. **配置环境变量**
+- 复制 `.env.example` 为 `.env`
+- 填写所有必需的配置项
+
+3. **初始化数据库**
+```bash
+# 创建PostgreSQL数据库
+createdb roleplay_db
+
+# 启动Redis
+redis-server
+```
+
+4. **启动服务**
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+5. **预设角色数据**
+
+## API 使用示例
+
+### 1. 用户注册
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "email": "test@example.com",
+    "password": "password123"
+  }'
+```
+
+### 2. 用户登录
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "password": "password123"
+  }'
+```
+
+### 3. 获取角色列表
+```bash
+curl http://localhost:8000/api/v1/characters \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 4. 创建对话
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/conversations/1 \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 5. WebSocket连接示例（JavaScript）
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/1');
+
+ws.onopen = () => {
+    console.log('Connected to websocket');
+
+    // 发送文字消息
+    ws.send(JSON.stringify({
+        type: 'text',
+        content: '你好，哈利！霍格沃茨怎么样？',
+        need_audio: true
+    }));
+};
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    if (data.type === 'text_stream') {
+        // 实时显示AI回复
+        console.log('AI:', data.content);
+    } else if (data.type === 'audio') {
+        // 播放音频
+        console.log('Audio URL:', data.url);
+    }
+};
+
+// 发送音频消息
+function sendAudio(audioBlob) {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+        const base64 = reader.result.split(',')[1];
+        ws.send(JSON.stringify({
+            type: 'audio',
+            data: base64
+        }));
+    };
+    reader.readAsDataURL(audioBlob);
+}
+```
+
+## 项目特点
+
+1. **简洁设计** - 没有过度工程化，代码结构清晰
+2. **异步架构** - 全面使用async/await，性能优秀
+3. **流式响应** - 支持AI回复的实时流式输出
+4. **双向通信** - WebSocket支持文字和语音双向交互
+5. **模块化** - 服务层分离，便于维护和测试
+
+## 部署建议
+
+### 开发环境
+```bash
+# 使用Docker Compose快速启动
+docker-compose up -d
+```
+
+### 生产环境
+1. 使用Gunicorn + Uvicorn workers
+2. 配置Nginx反向代理
+3. 使用环境变量管理敏感信息
+4. 启用HTTPS
+5. 配置日志收集
+
+### 性能优化
+1. Redis缓存热门角色配置
+2. 使用连接池管理数据库连接
+3. 音频文件使用CDN加速
+4. WebSocket消息使用消息队列解耦
+
+## 注意事项
+
+1. **Whisper模型** - 首次运行会自动下载模型文件（约140MB）
+2. **Edge-TTS** - 需要网络连接才能使用
+3. **七牛云配置** - 需要配置正确的域名和CORS策略
+4. **通义千问** - 注意API调用限制和费用
