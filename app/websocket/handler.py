@@ -151,8 +151,57 @@ async def handle_websocket(
                         "content": user_content
                     }, session_id)
 
-                    # 后续处理同文字消息
-                    # ... (同上面的文字处理逻辑)
+                    # 保存用户消息
+                    user_message = Message(
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=user_content
+                    )
+                    db.add(user_message)
+                    await db.commit()
+
+                    # 添加到历史
+                    message_history.append({"role": "user", "content": user_content})
+
+                    # 生成AI回复
+                    ai_content = ""
+                    async for chunk in LLMService.generate_response(
+                            messages=message_history[-10:],  # 只使用最近10条
+                            character_prompt=character.prompt_template
+                    ):
+                        ai_content += chunk
+                        await manager.send_message({
+                            "type": "text_stream",
+                            "content": chunk
+                        }, session_id)
+
+                    # 保存AI消息
+                    ai_message = Message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=ai_content
+                    )
+                    db.add(ai_message)
+                    await db.commit()
+
+                    # 生成语音
+                    if data.get("need_audio", False):
+                        audio_data = await tts_service.synthesize(
+                            ai_content,
+                            character.voice_id
+                        )
+                        audio_url = await storage_service.upload_audio(audio_data)
+
+                        ai_message.audio_url = audio_url
+                        await db.commit()
+
+                        await manager.send_message({
+                            "type": "audio",
+                            "url": audio_url
+                        }, session_id)
+
+                    message_history.append({"role": "assistant", "content": ai_content})
+
 
     except WebSocketDisconnect:
         manager.disconnect(session_id)
