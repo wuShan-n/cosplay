@@ -1,0 +1,100 @@
+🎯 核心功能实现
+1. 数据模型扩展 (models.py)
+
+新增 KnowledgeDocument 表：存储知识库文档信息
+新增 KnowledgeChunk 表：存储文档分块和向量嵌入
+使用 pgvector 存储 1536 维的向量嵌入
+Character 模型增加 RAG 相关配置字段
+
+2. RAG 服务 (services/rag_service.py)
+
+文档处理：支持 PDF、TXT、DOCX 格式
+文本分块：使用 RecursiveCharacterTextSplitter 智能分割
+向量嵌入：使用通义千问的 text-embedding-v2 模型
+相似度搜索：基于 pgvector 的高效向量检索
+上下文构建：自动生成结构化的知识上下文
+
+3. 知识库管理 API (api/knowledge.py)
+
+上传知识文档到角色知识库
+手动添加知识内容
+查看角色的所有知识文档
+删除知识文档
+测试知识搜索功能
+
+4. WebSocket 集成 (websocket/handler.py)
+
+自动检测角色是否启用知识库
+对用户问题进行向量检索
+将检索结果注入到 LLM prompt 中
+保存检索上下文到消息历史
+
+📝 使用步骤
+1. 安装依赖
+bashpip install -r requirements.txt
+2. 设置 PostgreSQL
+bash# 安装 pgvector 扩展
+sudo apt-get install postgresql-15-pgvector  # Ubuntu/Debian
+# 或
+brew install pgvector  # macOS
+
+# 连接数据库并执行
+psql -d roleplay_db -f setup_pgvector.sql
+3. 初始化带知识库的角色
+bashpython init_rag_characters.py
+4. 使用知识库 API
+上传文档到角色知识库
+bashcurl -X POST http://localhost:8000/api/v1/knowledge/characters/1/upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@harry_potter_spells.pdf"
+手动添加知识
+bashcurl -X POST http://localhost:8000/api/v1/knowledge/characters/1/manual \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "魁地奇规则",
+    "content": "魁地奇是魔法世界最受欢迎的运动..."
+  }'
+测试知识搜索
+bashcurl -X POST http://localhost:8000/api/v1/knowledge/characters/1/search \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "守护神咒怎么使用？",
+    "k": 3
+  }'
+🚀 特点
+
+简洁设计：充分复用现有代码结构，避免过度工程化
+高效检索：使用 pgvector 的 IVFFlat 索引加速向量搜索
+灵活配置：每个角色可独立配置是否使用知识库和检索数量
+透明集成：RAG 功能无缝集成到现有的聊天流程
+多格式支持：支持 PDF、Word、文本等多种文档格式
+
+💡 工作原理
+
+知识准备阶段：
+
+上传文档或手动添加知识
+自动分块并生成向量嵌入
+存储到 PostgreSQL + pgvector
+
+
+对话阶段：
+
+用户发送消息
+如果角色启用知识库，对问题进行向量检索
+获取最相关的 k 个知识片段
+将知识注入到角色的 prompt 中
+LLM 基于角色设定和知识生成回复
+
+
+优化策略：
+
+使用 IVFFlat 索引提高检索速度
+智能分块避免知识碎片化
+保存检索历史用于分析优化
+
+
+
+这个实现保持了代码的简洁性，同时提供了强大的 RAG 功能。每个角色都可以有自己专属的知识库，让对话更加准确和丰富。

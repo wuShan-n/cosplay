@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 
@@ -38,6 +38,8 @@ class CharacterCreate(BaseModel):
     voice_id: str = "zh-CN-XiaoxiaoNeural"  # 默认Edge-TTS声音
     prompt_template: str
     settings: dict = {}
+    use_knowledge_base: bool = False
+    knowledge_search_k: int = 3
 
 
 class CharacterResponse(BaseModel):
@@ -46,10 +48,35 @@ class CharacterResponse(BaseModel):
     description: str
     avatar_url: Optional[str]
     voice_id: str
+    use_knowledge_base: bool
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+# 知识库相关
+class KnowledgeDocumentCreate(BaseModel):
+    title: str
+    content: str
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    id: int
+    character_id: int
+    title: str
+    source_type: str
+    source_url: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class KnowledgeChunkResponse(BaseModel):
+    content: str
+    metadata: Dict  # API 响应中可以使用 metadata
+    relevance_score: float
 
 
 # 对话相关
@@ -62,6 +89,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     audio_url: Optional[str]
+    retrieved_context: List[Dict]
     created_at: datetime
 
     class Config:

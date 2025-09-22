@@ -14,3 +14,12 @@ faster-whisper>=1.0.2
 edge-tts>=6.1.9
 qiniu>=7.15.0
 python-dotenv>=1.0.1
+
+# LangChain 相关依赖
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-openai>=0.1.0
+pgvector>=0.2.5
+tiktoken>=0.7.0
+pypdf>=4.0.0
+docx2txt>=0.8

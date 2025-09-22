@@ -10,6 +10,7 @@ from ..services.llm_service import LLMService
 from ..services.stt_service import stt_service
 from ..services.tts_service import tts_service
 from ..services.storage_service import storage_service
+from ..services.rag_service import rag_service
 from ..config import settings
 
 
@@ -86,6 +87,27 @@ async def handle_websocket(
                     # 文字消息
                     user_content = data.get("content")
 
+                    # RAG检索相关知识
+                    retrieved_chunks = []
+                    context_prompt = ""
+
+                    if character.use_knowledge_base:
+                        retrieved_chunks = await rag_service.search_knowledge(
+                            db=db,
+                            character_id=character.id,
+                            query=user_content,
+                            k=character.knowledge_search_k
+                        )
+
+                        if retrieved_chunks:
+                            context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
+
+                            # 发送检索到的上下文信息（可选，用于调试）
+                            await manager.send_message({
+                                "type": "context",
+                                "chunks": retrieved_chunks
+                            }, session_id)
+
                     # 保存用户消息
                     user_message = Message(
                         conversation_id=conversation_id,
@@ -98,11 +120,16 @@ async def handle_websocket(
                     # 添加到历史
                     message_history.append({"role": "user", "content": user_content})
 
+                    # 构建增强的prompt
+                    enhanced_prompt = character.prompt_template
+                    if context_prompt:
+                        enhanced_prompt = f"{character.prompt_template}\n\n{context_prompt}"
+
                     # 生成AI回复
                     ai_content = ""
                     async for chunk in LLMService.generate_response(
                             messages=message_history[-10:],  # 只使用最近10条
-                            character_prompt=character.prompt_template
+                            character_prompt=enhanced_prompt
                     ):
                         ai_content += chunk
                         await manager.send_message({
@@ -110,11 +137,12 @@ async def handle_websocket(
                             "content": chunk
                         }, session_id)
 
-                    # 保存AI消息
+                    # 保存AI消息（包含检索到的上下文）
                     ai_message = Message(
                         conversation_id=conversation_id,
                         role="assistant",
-                        content=ai_content
+                        content=ai_content,
+                        retrieved_context=retrieved_chunks
                     )
                     db.add(ai_message)
                     await db.commit()
@@ -151,6 +179,21 @@ async def handle_websocket(
                         "content": user_content
                     }, session_id)
 
+                    # RAG检索相关知识
+                    retrieved_chunks = []
+                    context_prompt = ""
+
+                    if character.use_knowledge_base:
+                        retrieved_chunks = await rag_service.search_knowledge(
+                            db=db,
+                            character_id=character.id,
+                            query=user_content,
+                            k=character.knowledge_search_k
+                        )
+
+                        if retrieved_chunks:
+                            context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
+
                     # 保存用户消息
                     user_message = Message(
                         conversation_id=conversation_id,
@@ -163,11 +206,16 @@ async def handle_websocket(
                     # 添加到历史
                     message_history.append({"role": "user", "content": user_content})
 
+                    # 构建增强的prompt
+                    enhanced_prompt = character.prompt_template
+                    if context_prompt:
+                        enhanced_prompt = f"{character.prompt_template}\n\n{context_prompt}"
+
                     # 生成AI回复
                     ai_content = ""
                     async for chunk in LLMService.generate_response(
                             messages=message_history[-10:],  # 只使用最近10条
-                            character_prompt=character.prompt_template
+                            character_prompt=enhanced_prompt
                     ):
                         ai_content += chunk
                         await manager.send_message({
@@ -175,11 +223,12 @@ async def handle_websocket(
                             "content": chunk
                         }, session_id)
 
-                    # 保存AI消息
+                    # 保存AI消息（包含检索到的上下文）
                     ai_message = Message(
                         conversation_id=conversation_id,
                         role="assistant",
-                        content=ai_content
+                        content=ai_content,
+                        retrieved_context=retrieved_chunks
                     )
                     db.add(ai_message)
                     await db.commit()

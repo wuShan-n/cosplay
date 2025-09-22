@@ -41,5 +41,25 @@ class StorageService:
         else:
             raise Exception(f"Upload failed: {info}")
 
+    async def upload_document(self, document_data: bytes, original_filename: str = None) -> str:
+        """上传知识库文档到七牛云"""
+        if original_filename:
+            file_ext = original_filename.lower().split('.')[-1]
+        else:
+            file_ext = 'txt'
+
+        # 生成唯一文件名
+        hash_obj = hashlib.md5(document_data)
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f"documents/{timestamp}_{hash_obj.hexdigest()[:8]}.{file_ext}"
+
+        token = self.auth.upload_token(self.bucket, filename)
+        ret, info = put_data(token, filename, document_data)
+
+        if ret:
+            return f"{self.domain}/{filename}"
+        else:
+            raise Exception(f"Upload failed: {info}")
+
 
 storage_service = StorageService()
