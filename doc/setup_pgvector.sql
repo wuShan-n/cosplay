@@ -1,6 +1,6 @@
 -- 安装 pgvector 扩展
 CREATE EXTENSION IF NOT EXISTS vector;
-
+SELECT * FROM pg_extension WHERE extname = 'vector';
 -- 创建索引以加速向量搜索
 -- 在 knowledge_chunks 表创建后运行这个
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding

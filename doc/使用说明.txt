@@ -15,13 +15,11 @@ pip install -r requirements.txt
 # 创建PostgreSQL数据库
 createdb roleplay_db
 
-# 启动Redis
-redis-server
 ```
 
 4. **启动服务**
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 5. **预设角色数据**

@@ -153,28 +153,21 @@ class RAGService:
         # 获取查询向量
         query_embedding = await self.create_embedding(query)
 
-        # 使用 pgvector 进行相似度搜索
-        # 注意：需要先在PostgreSQL中安装pgvector扩展
-        sql = text("""
-                   SELECT kc.content,
-                          kc.chunk_metadata,
-                          kd.title as doc_title,
-                          kc.embedding < - > :query_embedding::vector as distance
-                   FROM knowledge_chunks kc
-                            JOIN knowledge_documents kd ON kc.document_id = kd.id
-                   WHERE kd.character_id = :character_id
-                   ORDER BY kc.embedding < - > :query_embedding::vector
-            LIMIT :k
-                   """)
-
-        result = await db.execute(
-            sql,
-            {
-                "query_embedding": str(query_embedding),
-                "character_id": character_id,
-                "k": k
-            }
+        stmt = (
+            select(
+                KnowledgeChunk.content,
+                KnowledgeChunk.chunk_metadata,
+                KnowledgeDocument.title.label("doc_title"),
+                KnowledgeChunk.embedding.l2_distance(query_embedding).label("distance")
+            )
+            .join(KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id)
+            .where(KnowledgeDocument.character_id == character_id)
+            .order_by(KnowledgeChunk.embedding.l2_distance(query_embedding))
+            .limit(k)
         )
+
+        result = await db.execute(stmt)
+
 
         chunks = []
         for row in result:

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import json
 import redis.asyncio as redis
+import base64
 
 from ..database import AsyncSessionLocal
 from ..models import Character, Conversation, Message
@@ -38,7 +39,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-
 async def handle_websocket(
         websocket: WebSocket,
         session_id: str,
@@ -49,19 +49,15 @@ async def handle_websocket(
     try:
         async with AsyncSessionLocal() as db:
             # 获取对话和角色信息
-            result = await db.execute(
-                select(Conversation).where(Conversation.id == conversation_id)
-            )
-            conversation = result.scalar_one_or_none()
-
+            conversation = await db.get(Conversation, conversation_id)
             if not conversation:
                 await websocket.send_json({"error": "Conversation not found"})
                 return
 
-            result = await db.execute(
-                select(Character).where(Character.id == conversation.character_id)
-            )
-            character = result.scalar_one_or_none()
+            character = await db.get(Character, conversation.character_id)
+            if not character:
+                await websocket.send_json({"error": "Character not found"})
+                return
 
             # 获取历史消息（最近10条）
             result = await db.execute(
@@ -82,178 +78,128 @@ async def handle_websocket(
             while True:
                 data = await websocket.receive_json()
                 message_type = data.get("type")
+                user_content = None
+                need_audio = data.get("need_audio", False)
 
                 if message_type == "text":
-                    # 文字消息
                     user_content = data.get("content")
 
-                    # RAG检索相关知识
-                    retrieved_chunks = []
-                    context_prompt = ""
-
-                    if character.use_knowledge_base:
-                        retrieved_chunks = await rag_service.search_knowledge(
-                            db=db,
-                            character_id=character.id,
-                            query=user_content,
-                            k=character.knowledge_search_k
-                        )
-
-                        if retrieved_chunks:
-                            context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
-
-                            # 发送检索到的上下文信息（可选，用于调试）
-                            await manager.send_message({
-                                "type": "context",
-                                "chunks": retrieved_chunks
-                            }, session_id)
-
-                    # 保存用户消息
-                    user_message = Message(
-                        conversation_id=conversation_id,
-                        role="user",
-                        content=user_content
-                    )
-                    db.add(user_message)
-                    await db.commit()
-
-                    # 添加到历史
-                    message_history.append({"role": "user", "content": user_content})
-
-                    # 构建增强的prompt
-                    enhanced_prompt = character.prompt_template
-                    if context_prompt:
-                        enhanced_prompt = f"{character.prompt_template}\n\n{context_prompt}"
-
-                    # 生成AI回复
-                    ai_content = ""
-                    async for chunk in LLMService.generate_response(
-                            messages=message_history[-10:],  # 只使用最近10条
-                            character_prompt=enhanced_prompt
-                    ):
-                        ai_content += chunk
-                        await manager.send_message({
-                            "type": "text_stream",
-                            "content": chunk
-                        }, session_id)
-
-                    # 保存AI消息（包含检索到的上下文）
-                    ai_message = Message(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=ai_content,
-                        retrieved_context=retrieved_chunks
-                    )
-                    db.add(ai_message)
-                    await db.commit()
-
-                    # 生成语音
-                    if data.get("need_audio", False):
-                        audio_data = await tts_service.synthesize(
-                            ai_content,
-                            character.voice_id
-                        )
-                        audio_url = await storage_service.upload_audio(audio_data)
-
-                        ai_message.audio_url = audio_url
-                        await db.commit()
-
-                        await manager.send_message({
-                            "type": "audio",
-                            "url": audio_url
-                        }, session_id)
-
-                    message_history.append({"role": "assistant", "content": ai_content})
-
                 elif message_type == "audio":
-                    # 音频消息
-                    audio_data = data.get("data")  # Base64编码的音频数据
-
-                    # 语音识别
-                    import base64
-                    audio_bytes = base64.b64decode(audio_data)
+                    audio_b64_data = data.get("data")
+                    audio_bytes = base64.b64decode(audio_b64_data)
                     user_content = await stt_service.transcribe(audio_bytes)
 
+                    # Send transcription back to the client
                     await manager.send_message({
                         "type": "transcription",
                         "content": user_content
                     }, session_id)
 
-                    # RAG检索相关知识
-                    retrieved_chunks = []
-                    context_prompt = ""
-
-                    if character.use_knowledge_base:
-                        retrieved_chunks = await rag_service.search_knowledge(
-                            db=db,
-                            character_id=character.id,
-                            query=user_content,
-                            k=character.knowledge_search_k
-                        )
-
-                        if retrieved_chunks:
-                            context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
-
-                    # 保存用户消息
-                    user_message = Message(
+                if user_content:
+                    await _process_user_input(
+                        db=db,
+                        character=character,
                         conversation_id=conversation_id,
-                        role="user",
-                        content=user_content
+                        user_content=user_content,
+                        message_history=message_history,
+                        session_id=session_id,
+                        need_audio=need_audio
                     )
-                    db.add(user_message)
-                    await db.commit()
-
-                    # 添加到历史
-                    message_history.append({"role": "user", "content": user_content})
-
-                    # 构建增强的prompt
-                    enhanced_prompt = character.prompt_template
-                    if context_prompt:
-                        enhanced_prompt = f"{character.prompt_template}\n\n{context_prompt}"
-
-                    # 生成AI回复
-                    ai_content = ""
-                    async for chunk in LLMService.generate_response(
-                            messages=message_history[-10:],  # 只使用最近10条
-                            character_prompt=enhanced_prompt
-                    ):
-                        ai_content += chunk
-                        await manager.send_message({
-                            "type": "text_stream",
-                            "content": chunk
-                        }, session_id)
-
-                    # 保存AI消息（包含检索到的上下文）
-                    ai_message = Message(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=ai_content,
-                        retrieved_context=retrieved_chunks
-                    )
-                    db.add(ai_message)
-                    await db.commit()
-
-                    # 生成语音
-                    if data.get("need_audio", False):
-                        audio_data = await tts_service.synthesize(
-                            ai_content,
-                            character.voice_id
-                        )
-                        audio_url = await storage_service.upload_audio(audio_data)
-
-                        ai_message.audio_url = audio_url
-                        await db.commit()
-
-                        await manager.send_message({
-                            "type": "audio",
-                            "url": audio_url
-                        }, session_id)
-
-                    message_history.append({"role": "assistant", "content": ai_content})
-
 
     except WebSocketDisconnect:
         manager.disconnect(session_id)
     except Exception as e:
-        await websocket.send_json({"error": str(e)})
+        # It's good practice to log the exception here
+        # import logging
+        # logging.error(f"An error occurred for session {session_id}: {e}")
+        await manager.send_message({"error": str(e)}, session_id)
         manager.disconnect(session_id)
+
+async def _process_user_input(
+    db: AsyncSession,
+    character: Character,
+    conversation_id: int,
+    user_content: str,
+    message_history: list,
+    session_id: str,
+    need_audio: bool = False
+):
+    """
+    Handles the core logic of processing user text, generating a response,
+    and handling database operations.
+    """
+    # RAG检索相关知识
+    retrieved_chunks = []
+    context_prompt = ""
+
+    if character.use_knowledge_base:
+        retrieved_chunks = await rag_service.search_knowledge(
+            db=db,
+            character_id=character.id,
+            query=user_content,
+            k=character.knowledge_search_k
+        )
+
+        if retrieved_chunks:
+            context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
+            # 可选: 发送检索到的上下文信息用于调试
+            await manager.send_message({
+                "type": "context",
+                "chunks": retrieved_chunks
+            }, session_id)
+
+    # 保存用户消息
+    user_message = Message(
+        conversation_id=conversation_id,
+        role="user",
+        content=user_content
+    )
+    db.add(user_message)
+    await db.commit()
+
+    # 添加到历史
+    message_history.append({"role": "user", "content": user_content})
+
+    # 构建增强的prompt
+    enhanced_prompt = character.prompt_template
+    if context_prompt:
+        enhanced_prompt = f"{character.prompt_template}\n\n{context_prompt}"
+
+    # 生成AI回复
+    ai_content = ""
+    async for chunk in LLMService.generate_response(
+            messages=message_history[-10:],  # 只使用最近10条
+            character_prompt=enhanced_prompt
+    ):
+        ai_content += chunk
+        await manager.send_message({
+            "type": "text_stream",
+            "content": chunk
+        }, session_id)
+
+    # 保存AI消息（包含检索到的上下文）
+    ai_message = Message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=ai_content,
+        retrieved_context=retrieved_chunks
+    )
+    db.add(ai_message)
+    await db.commit()
+
+    # 生成语音
+    if need_audio:
+        audio_data = await tts_service.synthesize(
+            ai_content,
+            character.voice_id
+        )
+        audio_url = await storage_service.upload_audio(audio_data)
+        ai_message.audio_url = audio_url
+        await db.commit()
+
+        await manager.send_message({
+            "type": "audio",
+            "url": audio_url
+        }, session_id)
+
+    message_history.append({"role": "assistant", "content": ai_content})
