@@ -5,7 +5,7 @@ from typing import List
 
 from ..database import get_db
 from ..models import User, Character, Conversation, Message
-from ..schemas import MessageCreate, MessageResponse, ConversationResponse
+from ..schemas import  MessageResponse, ConversationResponse
 from .auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])

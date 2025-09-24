@@ -49,40 +49,43 @@ class CharacterResponse(BaseModel):
     avatar_url: Optional[str]
     voice_id: str
     use_knowledge_base: bool
+    knowledge_search_k: int
     created_at: datetime
 
     class Config:
         from_attributes = True
+
 
 
 # 知识库相关
 class KnowledgeDocumentCreate(BaseModel):
     title: str
     content: str
+    description: Optional[str] = None
 
 
 class KnowledgeDocumentResponse(BaseModel):
+    """知识库详细信息"""
     id: int
-    character_id: int
     title: str
+    description: Optional[str]
     source_type: str
     source_url: Optional[str]
+    is_public: bool
+    created_by: Optional[int]
+    creator: Optional['UserResponse']
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
 
-
 class KnowledgeChunkResponse(BaseModel):
     content: str
-    metadata: Dict  # API 响应中可以使用 metadata
+    metadata: Dict
     relevance_score: float
 
-
 # 对话相关
-class MessageCreate(BaseModel):
-    content: str
-
 
 class MessageResponse(BaseModel):
     id: int
@@ -101,6 +104,7 @@ class ConversationResponse(BaseModel):
     character: CharacterResponse
     messages: List[MessageResponse]
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
