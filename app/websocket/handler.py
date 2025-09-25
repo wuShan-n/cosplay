@@ -121,6 +121,22 @@ async def handle_websocket(
                 for msg in recent_messages
             ]
 
+            if recent_messages:
+
+                history_payload = [
+                    {
+                        "role": msg.role,
+                        "content": msg.content,
+                        "created_at": msg.created_at.isoformat(),  # 发送时间戳有助于前端排序和显示
+                        "audio_url": msg.audio_url
+                    }
+                    for msg in recent_messages
+                ]
+                await manager.send_message({
+                    "type": "history",  # 定义一个清晰的消息类型
+                    "messages": history_payload
+                }, session_id)
+                logger.info(f"已将 {len(history_payload)} 条历史消息发送到 session_id={session_id}")
 
             while True:
                 data = await websocket.receive_json()
@@ -222,10 +238,10 @@ async def _process_user_input(
 
         if retrieved_chunks:
             rag_context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
-            await manager.send_message({
-                "type": "context",
-                "chunks": retrieved_chunks
-            }, session_id)
+            # await manager.send_message({
+            #     "type": "context",
+            #     "chunks": retrieved_chunks
+            # }, session_id)
             logger.debug(f"构建RAG上下文提示: {rag_context_prompt[:100]}...")
 
     # 保存用户消息
