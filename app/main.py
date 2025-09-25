@@ -15,7 +15,7 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     #日志排查使用
-    # setup_logging()
+    setup_logging()
     # 启动时创建数据库表
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
