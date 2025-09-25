@@ -97,6 +97,30 @@ async def generate_context_summary(messages: list) -> str:
         return f"对话历史摘要: 最近{len(messages)}条消息的对话上下文"
 
 
+async def save_and_upload_audio(audio_bytes: bytes, role: str = "user") -> str:
+    """
+    保存音频到七牛云并返回URL
+
+    参数:
+        audio_bytes: 音频二进制数据
+        role: 角色类型，用于生成文件名前缀
+
+    返回:
+        音频URL
+    """
+    try:
+        # 根据角色生成不同的文件名前缀
+        prefix = "user_audio" if role == "user" else "assistant_audio"
+        filename = f"audio/{prefix}/{role}_audio.webm" if role == "user" else None
+
+        audio_url = await storage_service.upload_audio(audio_bytes, filename)
+        logger.debug(f"{role} 音频上传成功: {audio_url}")
+        return audio_url
+    except Exception as e:
+        logger.error(f"{role} 音频上传失败: {e}")
+        return None
+
+
 async def handle_websocket(
         websocket: WebSocket,
         session_id: str,
@@ -122,18 +146,17 @@ async def handle_websocket(
             ]
 
             if recent_messages:
-
                 history_payload = [
                     {
                         "role": msg.role,
                         "content": msg.content,
-                        "created_at": msg.created_at.isoformat(),  # 发送时间戳有助于前端排序和显示
+                        "created_at": msg.created_at.isoformat(),
                         "audio_url": msg.audio_url
                     }
                     for msg in recent_messages
                 ]
                 await manager.send_message({
-                    "type": "history",  # 定义一个清晰的消息类型
+                    "type": "history",
                     "messages": history_payload
                 }, session_id)
                 logger.info(f"已将 {len(history_payload)} 条历史消息发送到 session_id={session_id}")
@@ -145,6 +168,8 @@ async def handle_websocket(
                 logger.info(f"收到消息: type={message_type}, need_audio={need_audio}")
 
                 user_content = None
+                user_audio_url = None  # 用户音频URL
+
                 # 获取对话上下文，用于帮助LLM更好地校正文本
                 context = None
                 if message_history and message_history[-1]["role"] == "assistant":
@@ -166,6 +191,8 @@ async def handle_websocket(
                     audio_b64_data = data.get("data")
                     logger.debug(f"处理音频输入: 数据长度={len(audio_b64_data) if audio_b64_data else 0}")
                     audio_bytes = base64.b64decode(audio_b64_data)
+
+                    # 1. 语音识别和文本校正
                     user_content = await stt_service.transcribe_and_correct(audio_bytes, context)
                     await manager.send_message({
                         "type": "transcription",
@@ -173,7 +200,18 @@ async def handle_websocket(
                         "is_corrected": True
                     }, session_id)
                     logger.info(f"语音识别完成: {user_content[:100]}...")
-                    need_audio = True
+
+                    # 2. 上传用户音频到七牛云
+                    user_audio_url = await save_and_upload_audio(audio_bytes, role="user")
+                    if user_audio_url:
+                        await manager.send_message({
+                            "type": "audio",
+                            "url": user_audio_url
+                        }, session_id)
+                        logger.info(f"用户音频已上传: {user_audio_url}")
+
+                need_audio = True
+
                 if user_content:
                     logger.debug(f"开始处理用户输入: {user_content[:100]}...")
                     await _process_user_input(
@@ -181,6 +219,7 @@ async def handle_websocket(
                         character=character,
                         conversation_id=conversation_id,
                         user_content=user_content,
+                        user_audio_url=user_audio_url,  # 传递用户音频URL
                         message_history=message_history,
                         session_id=session_id,
                         need_audio=need_audio
@@ -204,6 +243,7 @@ async def _process_user_input(
         character: Character,
         conversation_id: int,
         user_content: str,
+        user_audio_url: str,  # 新增参数：用户音频URL
         message_history: list,
         session_id: str,
         need_audio: bool = False
@@ -212,7 +252,8 @@ async def _process_user_input(
     Handles the core logic of processing user text, generating a response,
     and handling database operations.
     """
-    logger.info(f"处理用户输入: need_audio={need_audio}, content_length={len(user_content)}")
+    logger.info(
+        f"处理用户输入: need_audio={need_audio}, content_length={len(user_content)}, has_audio={bool(user_audio_url)}")
 
     # 获取最近的10条消息（包括用户刚发送的这条）
     recent_messages = await get_recent_messages(db, conversation_id, 10)
@@ -238,21 +279,18 @@ async def _process_user_input(
 
         if retrieved_chunks:
             rag_context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
-            # await manager.send_message({
-            #     "type": "context",
-            #     "chunks": retrieved_chunks
-            # }, session_id)
             logger.debug(f"构建RAG上下文提示: {rag_context_prompt[:100]}...")
 
-    # 保存用户消息
+    # 保存用户消息（包含音频URL）
     user_message = Message(
         conversation_id=conversation_id,
         role="user",
-        content=user_content
+        content=user_content,
+        audio_url=user_audio_url  # 保存用户音频URL
     )
     db.add(user_message)
     await db.commit()
-    logger.debug("用户消息已保存到数据库")
+    logger.debug(f"用户消息已保存到数据库，audio_url={user_audio_url}")
 
     # 添加到历史
     message_history.append({"role": "user", "content": user_content})
@@ -283,21 +321,12 @@ async def _process_user_input(
         }, session_id)
     logger.info(f"AI回复生成完成: content_length={len(ai_content)}")
 
-    # 保存AI消息（包含检索到的上下文和对话历史总结）
-    ai_message = Message(
-        conversation_id=conversation_id,
-        role="assistant",
-        content=ai_content,
-        retrieved_context=retrieved_chunks,
-        context_prompt=context_summary  # 存储对话历史总结
-    )
-    db.add(ai_message)
-    await db.commit()
-    logger.debug("AI消息已保存到数据库")
+    # 初始化AI音频URL
+    ai_audio_url = None
 
-    # 生成语音
+    # 生成AI语音（如果需要）
     if need_audio:
-        logger.info("开始生成语音")
+        logger.info("开始生成AI语音")
         try:
             audio_data = await tts_service.synthesize(
                 ai_content,
@@ -305,18 +334,17 @@ async def _process_user_input(
             )
             logger.debug(f"语音合成完成: audio_data_size={len(audio_data)}")
 
-            audio_url = await storage_service.upload_audio(audio_data)
-            logger.debug(f"音频上传完成: audio_url={audio_url}")
+            # 使用通用函数上传音频
+            ai_audio_url = await save_and_upload_audio(audio_data, role="assistant")
+            if ai_audio_url:
+                await manager.send_message({
+                    "type": "audio",
+                    "url": ai_audio_url
+                }, session_id)
+                logger.info(f"AI音频消息已发送到客户端: {ai_audio_url}")
+            else:
+                raise Exception("音频上传失败")
 
-            ai_message.audio_url = audio_url
-            await db.commit()
-            logger.debug("音频URL已保存到数据库")
-
-            await manager.send_message({
-                "type": "audio",
-                "url": audio_url
-            }, session_id)
-            logger.info("音频消息已发送到客户端")
         except Exception as e:
             logger.error(f"语音合成错误: {e}", exc_info=True)
             await manager.send_message({
@@ -325,5 +353,18 @@ async def _process_user_input(
             }, session_id)
     else:
         logger.debug("不需要生成语音")
+
+    # 保存AI消息（包含检索到的上下文、对话历史总结和音频URL）
+    ai_message = Message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=ai_content,
+        audio_url=ai_audio_url,  # 保存AI音频URL
+        retrieved_context=retrieved_chunks,
+        context_prompt=context_summary  # 存储对话历史总结
+    )
+    db.add(ai_message)
+    await db.commit()
+    logger.debug(f"AI消息已保存到数据库，audio_url={ai_audio_url}")
 
     message_history.append({"role": "assistant", "content": ai_content})

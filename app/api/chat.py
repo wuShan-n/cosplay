@@ -82,3 +82,31 @@ async def get_messages(
     messages = result.scalars().all()
 
     return messages
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+        conversation_id: int,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """删除对话及其所有消息"""
+    # 验证对话存在且属于当前用户
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id
+        )
+    )
+    conversation = result.scalar_one_or_none()
+
+    if not conversation:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found or you don't have permission to delete it"
+        )
+
+    # 删除对话（由于cascade设置，相关消息会自动删除）
+    await db.delete(conversation)
+    await db.commit()
+
+    return {"message": f"Conversation {conversation_id} deleted successfully"}
