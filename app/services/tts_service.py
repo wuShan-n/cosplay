@@ -26,13 +26,5 @@ class TTSService:
         finally:
             os.unlink(tmp_path)
 
-    @staticmethod
-    async def get_voices(language: str = "zh") -> list:
-        """获取可用的语音列表"""
-        voices = await edge_tts.list_voices()
-        if language:
-            voices = [v for v in voices if v["Locale"].startswith(language)]
-        return voices
-
 
 tts_service = TTSService()

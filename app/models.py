@@ -117,5 +117,5 @@ class Message(Base):
     audio_url = Column(String)  # 音频文件URL（七牛云）
     retrieved_context = Column(JSON, default=[])  # RAG检索到的上下文
     created_at = Column(DateTime, default=datetime.utcnow)
-
     conversation = relationship("Conversation", back_populates="messages", lazy="selectin")
+    context_prompt = Column(String(1000), nullable=True)

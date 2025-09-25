@@ -1,6 +1,6 @@
 import dashscope
 from dashscope import Generation
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 import json
 from ..config import settings
 
@@ -35,6 +35,7 @@ class LLMService:
                     if content:
                         yield content
         else:
+            # 非流式调用
             response = Generation.call(
                 model='qwen-turbo',
                 messages=full_messages,
@@ -42,3 +43,9 @@ class LLMService:
             )
             if response.status_code == 200:
                 yield response.output.choices[0].message.content
+            else:
+                # 处理错误情况
+                error_msg = f"LLM调用失败: {response.message}"
+                if hasattr(response, 'code'):
+                    error_msg += f", 错误码: {response.code}"
+                raise Exception(error_msg)

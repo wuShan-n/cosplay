@@ -11,7 +11,6 @@ class Settings(BaseSettings):
 
     # 数据库
     DATABASE_URL: str
-    REDIS_URL: str = "redis://localhost:6379"
 
     # 通义千问
     DASHSCOPE_API_KEY: str
@@ -24,7 +23,7 @@ class Settings(BaseSettings):
 
     # Whisper配置
     WHISPER_MODEL: str = "base"
-    WHISPER_DEVICE: str = "cpu"
+    WHISPER_DEVICE: str = "cuda"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
