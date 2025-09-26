@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import List
 
 from ..database import get_db
 from ..models import User, Character, Conversation, Message
-from ..schemas import  MessageResponse, ConversationResponse
+from ..schemas import MessageResponse, ConversationResponse
 from .auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -19,10 +20,7 @@ async def create_conversation(
 ):
     """创建新对话"""
     # 检查角色是否存在
-    result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
-    character = result.scalar_one_or_none()
+    character = await db.get(Character, character_id)
 
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -34,7 +32,17 @@ async def create_conversation(
     )
     db.add(conversation)
     await db.commit()
-    await db.refresh(conversation)
+
+    # 重新查询以加载所需的关系
+    result = await db.execute(
+        select(Conversation)
+        .where(Conversation.id == conversation.id)
+        .options(
+            selectinload(Conversation.character),
+            selectinload(Conversation.messages)
+        )
+    )
+    conversation = result.scalar_one()
 
     return conversation
 
@@ -45,12 +53,18 @@ async def list_conversations(
         current_user: User = Depends(get_current_user)
 ):
     """获取用户的所有对话"""
+    # 使用 selectinload 预加载需要的关系
     result = await db.execute(
         select(Conversation)
         .where(Conversation.user_id == current_user.id)
         .order_by(Conversation.updated_at.desc())
+        .options(
+            selectinload(Conversation.character),
+            selectinload(Conversation.messages)  # 如果不需要消息，可以移除这行
+        )
     )
     conversations = result.scalars().all()
+
     return conversations
 
 
@@ -82,6 +96,7 @@ async def get_messages(
     messages = result.scalars().all()
 
     return messages
+
 
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(

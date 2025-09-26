@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any, Coroutine, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, Row, RowMapping
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload, subqueryload
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 import dashscope
@@ -211,8 +211,16 @@ class RAGService:
             character_id: int,
             document_id: int
     ) -> bool:
-        """将知识库关联到角色"""
-        character = await db.get(Character, character_id)
+        """将知识库关联到角色 - 使用异步查询"""
+        # 使用异步查询获取角色及其知识库
+        result = await db.execute(
+            select(Character)
+            .where(Character.id == character_id)
+            .options(selectinload(Character.knowledge_documents))
+        )
+        character = result.scalar_one_or_none()
+
+        # 使用异步 get
         document = await db.get(KnowledgeDocument, document_id)
 
         if not character or not document:
@@ -233,8 +241,16 @@ class RAGService:
             character_id: int,
             document_id: int
     ) -> bool:
-        """解除知识库与角色的关联"""
-        character = await db.get(Character, character_id)
+        """解除知识库与角色的关联 - 使用异步查询"""
+        # 使用异步查询获取角色及其知识库
+        result = await db.execute(
+            select(Character)
+            .where(Character.id == character_id)
+            .options(selectinload(Character.knowledge_documents))
+        )
+        character = result.scalar_one_or_none()
+
+        # 使用异步 get
         document = await db.get(KnowledgeDocument, document_id)
 
         if not character or not document:
@@ -256,9 +272,15 @@ class RAGService:
             query: str,
             k: int = 3
     ) -> List[Dict]:
-        """检索相关知识"""
-        # 获取角色关联的文档
-        character = await db.get(Character, character_id, options=[selectinload(Character.knowledge_documents)])
+        """检索相关知识 - 使用异步查询"""
+        # 使用异步查询获取角色及其知识库
+        result = await db.execute(
+            select(Character)
+            .where(Character.id == character_id)
+            .options(selectinload(Character.knowledge_documents))
+        )
+        character = result.scalar_one_or_none()
+
         if not character or not character.knowledge_documents:
             return []
 
@@ -337,12 +359,13 @@ class RAGService:
             db: AsyncSession,
             character_id: int
     ) -> List[KnowledgeDocument]:
-        """获取角色关联的所有知识库"""
-        character = await db.get(
-            Character,
-            character_id,
-            options=[selectinload(Character.knowledge_documents)]
+        """获取角色关联的所有知识库 - 使用异步查询"""
+        result = await db.execute(
+            select(Character)
+            .where(Character.id == character_id)
+            .options(selectinload(Character.knowledge_documents))
         )
+        character = result.scalar_one_or_none()
         return character.knowledge_documents if character else []
 
 

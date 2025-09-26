@@ -1,6 +1,7 @@
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 import json
 import redis.asyncio as redis
 import base64
@@ -14,6 +15,7 @@ from ..services.tts_service import tts_service
 from ..services.storage_service import storage_service
 from ..services.rag_service import rag_service
 from ..services.text_correction_service import text_correction_service
+from ..utils.query_utils import query_utils
 from ..config import settings
 
 # 配置日志记录器
@@ -44,22 +46,22 @@ manager = ConnectionManager()
 async def get_conversation_and_character(db: AsyncSession, conversation_id: int, user_id: int = None):
     """
     获取对话和角色信息，并验证权限（如果提供了user_id）
+    使用优化的查询避免 N+1 问题
     """
-    # 获取对话
-    conversation = await db.get(Conversation, conversation_id)
+    # 使用优化的查询工具
+    conversation = await query_utils.get_conversation_with_character(db, conversation_id)
+
     if not conversation:
         raise ValueError("Conversation not found")
 
-    # 获取角色
-    character = await db.get(Character, conversation.character_id)
-    if not character:
+    if not conversation.character:
         raise ValueError("Character not found")
 
-    return conversation, character
+    return conversation, conversation.character
 
 
 async def get_recent_messages(db: AsyncSession, conversation_id: int, limit: int = 10):
-    """获取最近的消息"""
+    """获取最近的消息 - 直接查询，不预加载关系"""
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
@@ -131,7 +133,7 @@ async def handle_websocket(
     db = None
     try:
         async with AsyncSessionLocal() as db:
-            # 获取对话和角色信息
+            # 使用优化的查询获取对话和角色信息
             conversation, character = await get_conversation_and_character(db, conversation_id)
             logger.info(f"成功获取对话和角色信息: conversation_id={conversation_id}, character_id={character.id}")
 
@@ -269,17 +271,20 @@ async def _process_user_input(
 
     if character.use_knowledge_base:
         logger.debug(f"开始RAG检索: character_id={character.id}")
-        retrieved_chunks = await rag_service.search_knowledge(
-            db=db,
-            character_id=character.id,
-            query=user_content,
-            k=character.knowledge_search_k
-        )
-        logger.debug(f"RAG检索完成: 找到 {len(retrieved_chunks)} 个相关片段")
+        # 需要时才加载知识库文档
+        character_with_docs = await query_utils.get_character_with_documents(db, character.id)
+        if character_with_docs and character_with_docs.knowledge_documents:
+            retrieved_chunks = await rag_service.search_knowledge(
+                db=db,
+                character_id=character.id,
+                query=user_content,
+                k=character.knowledge_search_k
+            )
+            logger.debug(f"RAG检索完成: 找到 {len(retrieved_chunks)} 个相关片段")
 
-        if retrieved_chunks:
-            rag_context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
-            logger.debug(f"构建RAG上下文提示: {rag_context_prompt[:100]}...")
+            if retrieved_chunks:
+                rag_context_prompt = await rag_service.build_context_prompt(retrieved_chunks)
+                logger.debug(f"构建RAG上下文提示: {rag_context_prompt[:100]}...")
 
     # 保存用户消息（包含音频URL）
     user_message = Message(

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from ..database import get_db
@@ -49,7 +50,13 @@ async def upload_knowledge_document(
         is_public=is_public
     )
 
-    await db.commit()
+    # 重新查询以获取chunks数量（避免lazy loading）
+    result = await db.execute(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == knowledge_doc.id)
+        .options(selectinload(KnowledgeDocument.chunks))
+    )
+    knowledge_doc = result.scalar_one()
 
     return {
         "id": knowledge_doc.id,
@@ -68,7 +75,15 @@ async def list_public_knowledge_documents(
         db: AsyncSession = Depends(get_db)
 ):
     """获取所有公开的知识库文档"""
-    documents = await rag_service.get_public_knowledge_documents(db, skip, limit)
+    result = await db.execute(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.is_public == True)
+        .order_by(KnowledgeDocument.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .options(selectinload(KnowledgeDocument.creator))  # 如果响应模型需要creator
+    )
+    documents = result.scalars().all()
     return documents
 
 
@@ -82,6 +97,7 @@ async def list_my_knowledge_documents(
         select(KnowledgeDocument)
         .where(KnowledgeDocument.created_by == current_user.id)
         .order_by(KnowledgeDocument.created_at.desc())
+        .options(selectinload(KnowledgeDocument.creator))  # 预加载creator关系
     )
     documents = result.scalars().all()
     return documents
@@ -141,8 +157,20 @@ async def list_character_knowledge_documents(
         db: AsyncSession = Depends(get_db)
 ):
     """获取角色关联的所有知识库文档"""
-    documents = await rag_service.get_character_knowledge_documents(db, character_id)
-    return documents
+    # 查询角色并预加载知识库文档和其创建者
+    result = await db.execute(
+        select(Character)
+        .where(Character.id == character_id)
+        .options(
+            selectinload(Character.knowledge_documents).selectinload(KnowledgeDocument.creator)
+        )
+    )
+    character = result.scalar_one_or_none()
+
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    return character.knowledge_documents
 
 
 @router.delete("/documents/{document_id}")
@@ -169,6 +197,7 @@ async def delete_knowledge_document(
     await db.commit()
 
     return {"message": "Document deleted successfully"}
+
 
 @router.put("/documents/{document_id}/visibility")
 async def update_document_visibility(

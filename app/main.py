@@ -37,15 +37,9 @@ def setup_logging():
     logging.basicConfig(
         level=logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            RotatingFileHandler(
-                os.path.join(log_dir, 'app.log'),
-                maxBytes=10 * 1024 * 1024,
-                backupCount=5
-            ),
-            logging.StreamHandler()
-        ]
     )
+    db_logger = logging.getLogger('sqlalchemy.engine')
+    db_logger.setLevel(logging.INFO)  # 设置为INFO以记录所有SQL语句
 # CORS配置
 app.add_middleware(
     CORSMiddleware,

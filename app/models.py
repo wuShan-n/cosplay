@@ -16,7 +16,8 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    conversations = relationship("Conversation", back_populates="user", lazy="selectin")
+    # 改为默认的 lazy loading
+    conversations = relationship("Conversation", back_populates="user")
 
 
 # 多对多关联表
@@ -46,13 +47,13 @@ class Character(Base):
     use_knowledge_base = Column(Boolean, default=False)
     knowledge_search_k = Column(Integer, default=3)  # 检索的文档数量
 
-    conversations = relationship("Conversation", back_populates="character", lazy="selectin")
-    # 多对多关系
+    # 改为默认的 lazy loading
+    conversations = relationship("Conversation", back_populates="character")
+    # 多对多关系 - 使用 lazy loading
     knowledge_documents = relationship(
         "KnowledgeDocument",
         secondary=character_knowledge_association,
-        back_populates="characters",
-        lazy="selectin"
+        back_populates="characters"
     )
 
 
@@ -69,15 +70,14 @@ class KnowledgeDocument(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # 多对多关系
+    # 改为默认的 lazy loading
     characters = relationship(
         "Character",
         secondary=character_knowledge_association,
-        back_populates="knowledge_documents",
-        lazy="selectin"
+        back_populates="knowledge_documents"
     )
-    chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
-    creator = relationship("User", foreign_keys=[created_by], lazy="selectin")
+    chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by])
 
 
 class KnowledgeChunk(Base):
@@ -102,9 +102,10 @@ class Conversation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    user = relationship("User", back_populates="conversations", lazy="selectin")
-    character = relationship("Character", back_populates="conversations", lazy="selectin")
-    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", lazy="selectin")
+    # 改为默认的 lazy loading
+    user = relationship("User", back_populates="conversations")
+    character = relationship("Character", back_populates="conversations")
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 
 
 class Message(Base):
@@ -117,5 +118,5 @@ class Message(Base):
     audio_url = Column(String)  # 音频文件URL（七牛云）
     retrieved_context = Column(JSON, default=[])  # RAG检索到的上下文
     created_at = Column(DateTime, default=datetime.utcnow)
-    conversation = relationship("Conversation", back_populates="messages", lazy="selectin")
+    conversation = relationship("Conversation", back_populates="messages")
     context_prompt = Column(String(1000), nullable=True)
