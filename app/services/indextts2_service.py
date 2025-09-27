@@ -20,30 +20,9 @@ class IndexTTS2Service:
         self.endpoint = f"{self.api_url}/tts"
         logger.info(f"IndexTTS2 Service initialized with URL: {self.api_url}")
 
-        # 预设的音色参考音频（Base64编码）
-        # 你可以在这里预先准备一些音色样本
-        self.voice_presets = {}
-
-    async def add_voice_preset(self, name: str, audio_path: str):
-        """
-        添加预设音色
-
-        参数:
-            name: 音色名称
-            audio_path: 音频文件路径
-        """
-        try:
-            with open(audio_path, 'rb') as f:
-                audio_data = f.read()
-                self.voice_presets[name] = base64.b64encode(audio_data).decode()
-                logger.info(f"Added voice preset: {name}")
-        except Exception as e:
-            logger.error(f"Failed to add voice preset {name}: {e}")
-
     async def synthesize(
             self,
             text: str,
-            voice_id: str = None,
             voice_audio_base64: str = None,
             emo_text: Optional[str] = None,
             emo_audio_base64: Optional[str] = None,
@@ -67,24 +46,10 @@ class IndexTTS2Service:
         返回:
             合成的音频数据(bytes)
         """
-
-        # 确定音色来源
-        if voice_audio_base64:
-            voice_base64 = voice_audio_base64
-        elif voice_id and voice_id in self.voice_presets:
-            voice_base64 = self.voice_presets[voice_id]
-        else:
-            # 如果没有提供音色，使用默认音色或抛出异常
-            if "default" in self.voice_presets:
-                voice_base64 = self.voice_presets["default"]
-                logger.warning(f"Voice {voice_id} not found, using default voice")
-            else:
-                raise ValueError("No voice provided and no default voice available")
-
         # 构建请求数据
         request_data = {
             "text": text,
-            "voice_base64": voice_base64,
+            "voice_base64": voice_audio_base64,
             "emo_text": emo_text,
             "emo_audio_base64": emo_audio_base64,
             "emotion_vector": emotion_vector,

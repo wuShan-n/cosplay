@@ -52,7 +52,7 @@ class TTSService:
         if engine == TTSEngine.EDGE_TTS:
             return await self._synthesize_edge_tts(text, voice_id)
         elif engine == TTSEngine.INDEXTTS2:
-            return await self._synthesize_indextts2(text, voice_id, **kwargs)
+            return await self._synthesize_indextts2(text,  **kwargs)
         else:
             raise ValueError(f"Unsupported TTS engine: {engine}")
 
@@ -81,7 +81,6 @@ class TTSService:
     async def _synthesize_indextts2(
             self,
             text: str,
-            voice_id: str,
             **kwargs
     ) -> bytes:
         """
@@ -98,7 +97,6 @@ class TTSService:
         logger.debug(f"Using IndexTTS2 to synthesize {len(text)} characters")
         return await self.indextts2_service.synthesize(
             text=text,
-            voice_id=voice_id,
             **kwargs
         )
 

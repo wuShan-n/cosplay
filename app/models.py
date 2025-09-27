@@ -30,6 +30,8 @@ character_knowledge_association = Table(
 )
 
 
+# 在 app/models.py 的 Character 模型中添加 created_by 字段
+
 class Character(Base):
     __tablename__ = "characters"
 
@@ -37,17 +39,21 @@ class Character(Base):
     name = Column(String, index=True, nullable=False)
     description = Column(Text)
     avatar_url = Column(String)
-    voice_id = Column(String)  # Edge-TTS voice ID
+    voice_id = Column(String)  # Edge-TTS voice ID 或 IndexTTS2 voice preset ID
     prompt_template = Column(Text, nullable=False)
-    settings = Column(JSON, default={})  # 额外的角色设置
+    settings = Column(JSON, default={})
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 新增更新时间
     is_public = Column(Boolean, default=True)
+
+    # 创建者字段（新增）
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # 添加索引便于查询
 
     # RAG 设置
     use_knowledge_base = Column(Boolean, default=False)
-    knowledge_search_k = Column(Integer, default=3)  # 检索的文档数量
+    knowledge_search_k = Column(Integer, default=3)
 
-    # TTS 引擎配置（新增）
+    # TTS 引擎配置
     tts_engine = Column(String, default="edge_tts")  # 'edge_tts' 或 'indextts2'
     tts_config = Column(JSON, default={})  # 存储引擎特定的配置
     # tts_config 示例:
@@ -58,14 +64,15 @@ class Character(Base):
     #   "use_random": false           # 随机性
     # }
 
-    # 改为默认的 lazy loading
-    conversations = relationship("Conversation", back_populates="character")
-    # 多对多关系 - 使用 lazy loading
+    # 关系字段
+    conversations = relationship("Conversation", back_populates="character", cascade="all, delete-orphan")
     knowledge_documents = relationship(
         "KnowledgeDocument",
         secondary=character_knowledge_association,
         back_populates="characters"
     )
+    # 创建者关系（新增）
+    creator = relationship("User", foreign_keys=[created_by], backref="created_characters")
 
 
 class KnowledgeDocument(Base):
