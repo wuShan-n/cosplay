@@ -19,8 +19,13 @@ async def create_conversation(
         current_user: User = Depends(get_current_user)
 ):
     """创建新对话"""
-    # 检查角色是否存在
-    character = await db.get(Character, character_id)
+    # 检查角色是否存在，并预加载 creator 关系
+    result = await db.execute(
+        select(Character)
+        .where(Character.id == character_id)
+        .options(selectinload(Character.creator))  # 预加载creator关系
+    )
+    character = result.scalar_one_or_none()
 
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -33,12 +38,12 @@ async def create_conversation(
     db.add(conversation)
     await db.commit()
 
-    # 重新查询以加载所需的关系
+    # 重新查询以加载所需的关系，包括character的creator
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conversation.id)
         .options(
-            selectinload(Conversation.character),
+            selectinload(Conversation.character).selectinload(Character.creator),  # 嵌套加载creator
             selectinload(Conversation.messages)
         )
     )
@@ -53,13 +58,13 @@ async def list_conversations(
         current_user: User = Depends(get_current_user)
 ):
     """获取用户的所有对话"""
-    # 使用 selectinload 预加载需要的关系
+    # 使用 selectinload 预加载需要的关系，包括嵌套的creator
     result = await db.execute(
         select(Conversation)
         .where(Conversation.user_id == current_user.id)
         .order_by(Conversation.updated_at.desc())
         .options(
-            selectinload(Conversation.character),
+            selectinload(Conversation.character).selectinload(Character.creator),  # 嵌套加载creator
             selectinload(Conversation.messages)  # 如果不需要消息，可以移除这行
         )
     )
