@@ -331,15 +331,54 @@ async def _process_user_input(
 
     # 生成AI语音（如果需要）
     if need_audio:
-        logger.info("开始生成AI语音")
+        logger.info(f"开始生成AI语音，使用引擎: {character.tts_engine or 'edge_tts'}")
         try:
-            audio_data = await tts_service.synthesize(
-                ai_content,
-                character.voice_id
-            )
+            # 准备TTS参数
+            tts_kwargs = {}
+
+            # 根据角色配置选择TTS引擎
+            tts_engine = character.tts_engine or "edge_tts"
+
+            if tts_engine == "indextts2":
+                # 使用IndexTTS2引擎
+                from ..services.tts_service import TTSEngine
+
+                # 从角色配置中获取TTS特定参数
+                tts_config = character.tts_config or {}
+
+                # 动态情绪控制（可以根据对话内容分析情绪）
+                # 这里可以加入情绪分析逻辑
+                emo_text = tts_config.get("emo_text")
+
+                # 如果有特定的情绪需求，可以在这里动态设置
+                # 例如，根据AI回复的内容判断情绪
+                if "开心" in ai_content or "高兴" in ai_content:
+                    emo_text = "开心地说"
+                elif "抱歉" in ai_content or "对不起" in ai_content:
+                    emo_text = "歉意地说"
+                elif "?" in ai_content or "？" in ai_content:
+                    emo_text = "好奇地问"
+
+                audio_data = await tts_service.synthesize(
+                    text=ai_content,
+                    voice_id=character.voice_id,
+                    engine=TTSEngine.INDEXTTS2,
+                    voice_audio_base64=tts_config.get("voice_audio_base64"),
+                    emo_text=emo_text or tts_config.get("emo_text"),
+                    emo_alpha=tts_config.get("emo_alpha", 0.7),
+                    emotion_vector=tts_config.get("emotion_vector"),
+                    use_random=tts_config.get("use_random", False)
+                )
+            else:
+                # 使用Edge-TTS引擎（默认）
+                audio_data = await tts_service.synthesize(
+                    text=ai_content,
+                    voice_id=character.voice_id
+                )
+
             logger.debug(f"语音合成完成: audio_data_size={len(audio_data)}")
 
-            # 使用通用函数上传音频
+            # 上传音频
             ai_audio_url = await save_and_upload_audio(audio_data, role="assistant")
             if ai_audio_url:
                 await manager.send_message({
@@ -351,10 +390,10 @@ async def _process_user_input(
                 raise Exception("音频上传失败")
 
         except Exception as e:
-            logger.error(f"语音合成错误: {e}", exc_info=True)
+            logger.error(f"语音合成错误 (引擎: {character.tts_engine}): {e}", exc_info=True)
             await manager.send_message({
                 "type": "audio_error",
-                "message": "语音生成失败"
+                "message": f"语音生成失败 ({character.tts_engine})"
             }, session_id)
     else:
         logger.debug("不需要生成语音")

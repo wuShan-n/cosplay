@@ -47,6 +47,17 @@ class Character(Base):
     use_knowledge_base = Column(Boolean, default=False)
     knowledge_search_k = Column(Integer, default=3)  # 检索的文档数量
 
+    # TTS 引擎配置（新增）
+    tts_engine = Column(String, default="edge_tts")  # 'edge_tts' 或 'indextts2'
+    tts_config = Column(JSON, default={})  # 存储引擎特定的配置
+    # tts_config 示例:
+    # {
+    #   "voice_audio_base64": "...",  # IndexTTS2的音色参考
+    #   "emo_text": "开心地说",       # 默认情绪
+    #   "emo_alpha": 0.7,             # 情绪强度
+    #   "use_random": false           # 随机性
+    # }
+
     # 改为默认的 lazy loading
     conversations = relationship("Conversation", back_populates="character")
     # 多对多关系 - 使用 lazy loading

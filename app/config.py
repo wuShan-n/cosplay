@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = "base"
     WHISPER_DEVICE: str = "cuda"
 
+    # IndexTTS2配置（新增）
+    INDEXTTS2_API_URL: str = "http://localhost:6006"  # IndexTTS2 API地址
+    DEFAULT_TTS_ENGINE: str = "edge_tts"  # 默认TTS引擎
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()
