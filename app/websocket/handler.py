@@ -6,6 +6,7 @@ import json
 import redis.asyncio as redis
 import base64
 import logging
+import re
 from ..services.context_agent import ContextAgent
 from ..database import AsyncSessionLocal
 from ..models import Character, Conversation, Message
@@ -121,6 +122,49 @@ async def save_and_upload_audio(audio_bytes: bytes, role: str = "user") -> str:
     except Exception as e:
         logger.error(f"{role} 音频上传失败: {e}")
         return None
+
+
+async def _clean_text_for_tts(text: str) -> str:
+    """
+    使用LLM清理文本中的特殊符号，防止语音合成时读出
+
+    参数:
+        text: 需要清理的文本
+
+    返回:
+        清理后的文本
+    """
+    # 首先使用简单的正则表达式移除明显的特殊符号
+    # 移除星号、井号等常见特殊符号
+    cleaned = re.sub(r'[*#@$%^&_+={}\[\]|\\<>~`]', '', text)
+
+    # 如果文本已经很干净，直接返回
+    if cleaned == text:
+        return text
+
+    # 如果文本有特殊符号，使用LLM进行更智能的清理
+    prompt = f"""请帮我清理以下文本，移除所有不适合语音朗读的特殊符号和标记，但保留正常的标点符号（如句号、逗号、问号等）。
+
+需要清理的文本：
+{text}
+
+请只返回清理后的文本，不要添加任何解释或额外内容。"""
+
+    try:
+        # 调用LLM进行清理
+        cleaned_text = ""
+        async for chunk in LLMService.generate_response(
+                messages=[{"role": "user", "content": prompt}],
+                character_prompt="你是一个文本清理专家，擅长移除不适合语音朗读的特殊符号。",
+                stream=False
+        ):
+            cleaned_text += chunk
+
+        return cleaned_text.strip()
+    except Exception as e:
+        logger.error(f"使用LLM清理文本时出错: {e}")
+        # 如果LLM调用失败，返回正则表达式清理的版本
+        return cleaned
 
 
 async def handle_websocket(
@@ -333,6 +377,11 @@ async def _process_user_input(
     if need_audio:
         logger.info(f"开始生成AI语音，使用引擎: {character.tts_engine or 'edge_tts'}")
         try:
+            # 在生成语音前，先使用LLM清理文本中的特殊符号
+            logger.debug("开始清理文本中的特殊符号")
+            cleaned_text = await _clean_text_for_tts(ai_content)
+            logger.debug(f"文本清理完成: {cleaned_text[:100]}...")
+
             # 准备TTS参数
             tts_kwargs = {}
 
@@ -360,10 +409,11 @@ async def _process_user_input(
                     emo_text = "好奇地问"
 
                 audio_data = await tts_service.synthesize(
-                    text=ai_content,
+                    text=cleaned_text,  # 使用清理后的文本
                     voice_id=character.voice_id,
                     engine=TTSEngine.INDEXTTS2,
-                    voice_audio_base64=tts_config.get("voice_audio_base64"),
+                    voice_audio_url=tts_config.get("voice_audio_url"),  # <--- 新增此行
+                    emo_audio_url=tts_config.get("emo_audio_url"),  # <--- 建议也加上情绪音频URL
                     emo_text=emo_text or tts_config.get("emo_text"),
                     emo_alpha=tts_config.get("emo_alpha", 0.7),
                     emotion_vector=tts_config.get("emotion_vector"),
@@ -372,7 +422,7 @@ async def _process_user_input(
             else:
                 # 使用Edge-TTS引擎（默认）
                 audio_data = await tts_service.synthesize(
-                    text=ai_content,
+                    text=cleaned_text,  # 使用清理后的文本
                     voice_id=character.voice_id
                 )
 

@@ -1,11 +1,11 @@
 # app/api/characters.py
 import base64
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, attributes
 
 from .auth import get_current_user
 from ..database import get_db
@@ -167,15 +167,16 @@ async def create_character(
 ):
     """创建新角色"""
 
-    # 验证TTS配置
-    if character.tts_engine == TTSEngineType.INDEXTTS2:
-        if not character.tts_config:
-            character.tts_config = TTSConfig()
+    # (*** 修改 ***) 处理TTS配置中的Base64数据
+    tts_config_dict = character.tts_config.dict() if character.tts_config else {}
+    processed_tts_config = await _process_tts_audio_base64(tts_config_dict)
 
-        if not character.tts_config.voice_audio_base64 and not character.voice_id:
+    # 验证TTS配置 (基于处理后的配置)
+    if character.tts_engine == TTSEngineType.INDEXTTS2:
+        if not processed_tts_config.get("voice_audio_url") and not character.voice_id:
             raise HTTPException(
                 status_code=400,
-                detail="IndexTTS2 requires either voice_audio_base64 or a valid voice_id preset"
+                detail="IndexTTS2 requires either voice_audio_base64 (to be converted to URL) or a valid voice_id preset"
             )
 
     # 创建角色，设置创建者
@@ -189,9 +190,9 @@ async def create_character(
         use_knowledge_base=character.use_knowledge_base,
         knowledge_search_k=character.knowledge_search_k,
         tts_engine=character.tts_engine.value if character.tts_engine else "edge_tts",
-        tts_config=character.tts_config.dict() if character.tts_config else {},
-        is_public=True,  # 默认公开
-        created_by=current_user.id  # 设置创建者
+        tts_config=processed_tts_config,
+        is_public=True,
+        created_by=current_user.id
     )
 
     db.add(db_character)
@@ -252,13 +253,32 @@ async def update_character(
 
     # 处理TTS配置
     if "tts_config" in update_data and update_data["tts_config"]:
-        update_data["tts_config"] = update_data["tts_config"].dict() if hasattr(update_data["tts_config"], "dict") else \
-            update_data["tts_config"]
+        # 获取当前数据库中的配置，如果不存在则为空字典
+        current_config = character.tts_config.copy() if character.tts_config else {}
 
+        # 获取更新数据
+        update_config_data = update_data["tts_config"]
+
+        # 处理可能存在的Base64数据
+        processed_updates = await _process_tts_audio_base64(update_config_data)
+
+        # 将处理后的更新合并到当前配置中
+        current_config.update(processed_updates)
+
+        # 将合并后的完整配置赋值给角色模型
+        character.tts_config = current_config
+
+        # 标记JSON字段已修改，确保SQLAlchemy能检测到变化
+        attributes.flag_modified(character, "tts_config")
+
+        # 从主更新数据中移除tts_config，因为它已被特殊处理
+        del update_data["tts_config"]
+
+    # 处理TTS引擎枚举
     if "tts_engine" in update_data and update_data["tts_engine"]:
-        update_data["tts_engine"] = update_data["tts_engine"].value if hasattr(update_data["tts_engine"], "value") else \
-            update_data["tts_engine"]
+        update_data["tts_engine"] = update_data["tts_engine"].value
 
+    # 应用其余的更新
     for field, value in update_data.items():
         setattr(character, field, value)
 
@@ -366,52 +386,6 @@ async def toggle_character_visibility(
     }
 
 
-@router.post("/{character_id}/clone")
-async def clone_character(
-        character_id: int,
-        new_name: Optional[str] = None,
-        db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(get_current_user)
-):
-    """克隆一个角色（任何人都可以克隆公开角色）"""
-    result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
-    original = result.scalar_one_or_none()
-
-    if not original:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    # 权限检查：只能克隆公开角色或自己的角色
-    if not original.is_public and original.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="No permission to clone this private character")
-
-    # 创建克隆
-    cloned_character = Character(
-        name=new_name or f"{original.name} (Copy)",
-        description=original.description,
-        avatar_url=original.avatar_url,
-        voice_id=original.voice_id,
-        prompt_template=original.prompt_template,
-        settings=original.settings,
-        use_knowledge_base=original.use_knowledge_base,
-        knowledge_search_k=original.knowledge_search_k,
-        tts_engine=original.tts_engine,
-        tts_config=original.tts_config,
-        is_public=False,  # 克隆的角色默认为私有
-        created_by=current_user.id  # 设置为当前用户
-    )
-
-    db.add(cloned_character)
-    await db.commit()
-    await db.refresh(cloned_character)
-
-    return {
-        "id": cloned_character.id,
-        "name": cloned_character.name,
-        "message": f"Successfully cloned character as '{cloned_character.name}'"
-    }
-
 
 @router.post("/{character_id}/avatar")
 async def upload_avatar(
@@ -473,20 +447,55 @@ async def upload_voice_sample(
             detail=f"File type not supported. Allowed: {', '.join(allowed_extensions)}"
         )
 
-    # 读取音频文件并转为base64
+    # 读取音频文件并直接上传到七牛云
     audio_data = await file.read()
-    audio_base64 = base64.b64encode(audio_data).decode()
+    audio_url = await storage_service.upload_audio(audio_data, filename=file.filename)
 
     # 更新角色的TTS配置
     if not character.tts_config:
         character.tts_config = {}
 
-    character.tts_config["voice_audio_base64"] = audio_base64
+    # (*** 修改 ***) 保存URL而不是base64
+    character.tts_config["voice_audio_url"] = audio_url
+
     character.tts_engine = "indextts2"  # 自动切换到IndexTTS2引擎
+
+    # 标记JSON字段已修改
+    attributes.flag_modified(character, "tts_config")
 
     await db.commit()
 
     return {
         "message": "Voice sample uploaded successfully",
-        "tts_engine": character.tts_engine
+        "tts_engine": character.tts_engine,
+        "voice_audio_url": audio_url  # 返回URL
     }
+
+async def _process_tts_audio_base64(tts_config: Dict) -> Dict:
+    """处理TTS配置中的base64数据，上传到云存储并替换为URL"""
+    if not tts_config:
+        return {}
+
+    # 处理音色音频
+    if tts_config.get("voice_audio_base64"):
+        try:
+            audio_data = base64.b64decode(tts_config["voice_audio_base64"])
+            audio_url = await storage_service.upload_audio(audio_data)
+            tts_config["voice_audio_url"] = audio_url
+            # 删除临时的base64数据
+            del tts_config["voice_audio_base64"]
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid voice_audio_base64 format: {e}")
+
+    # 处理情绪参考音频
+    if tts_config.get("emo_audio_base64"):
+        try:
+            audio_data = base64.b64decode(tts_config["emo_audio_base64"])
+            audio_url = await storage_service.upload_audio(audio_data)
+            tts_config["emo_audio_url"] = audio_url
+            # 删除临শনেরbase64数据
+            del tts_config["emo_audio_base64"]
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid emo_audio_base64 format: {e}")
+
+    return tts_config

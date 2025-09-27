@@ -15,9 +15,16 @@ class TTSEngineType(str, Enum):
 # TTS配置模型
 class TTSConfig(BaseModel):
     """IndexTTS2 特定配置"""
-    voice_audio_base64: Optional[str] = Field(None, description="音色参考音频(base64)")
+
+    # Base64字段用于客户端上传，不会直接存入数据库
+    voice_audio_base64: Optional[str] = Field(None, description="音色参考音频(base64, 上传时使用)")
+    emo_audio_base64: Optional[str] = Field(None, description="情绪参考音频(base64, 上传时使用)")
+
+    # URL字段用于数据库存储和API响应
+    voice_audio_url: Optional[str] = Field(None, description="音色参考音频URL")
+    emo_audio_url: Optional[str] = Field(None, description="情绪参考音频URL")
+
     emo_text: Optional[str] = Field(None, description="默认情绪文本描述")
-    emo_audio_base64: Optional[str] = Field(None, description="情绪参考音频(base64)")
     emotion_vector: Optional[List[float]] = Field(
         None,
         description="8维情绪向量[开心,愤怒,悲伤,恐惧,厌恶,忧郁,惊讶,平静]",

@@ -1,9 +1,10 @@
 # app/services/indextts2_service.py
-import aiohttp
 import base64
 import logging
-from typing import Optional
 import os
+from typing import Optional, List
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,10 @@ class IndexTTS2Service:
     async def synthesize(
             self,
             text: str,
-            voice_audio_base64: str = None,
+            voice_audio_url: Optional[str] = None,  # (*** 新增 ***)
             emo_text: Optional[str] = None,
-            emo_audio_base64: Optional[str] = None,
-            emotion_vector: Optional[list] = None,
+            emo_audio_url: Optional[str] = None,  # (*** 新增 ***)
+            emotion_vector: Optional[List[float]] = None,
             emo_alpha: float = 0.7,
             use_random: bool = False
     ) -> bytes:
@@ -49,9 +50,9 @@ class IndexTTS2Service:
         # 构建请求数据
         request_data = {
             "text": text,
-            "voice_base64": voice_audio_base64,
+            "voice_base64": await self._download_audio_as_base64(voice_audio_url),
             "emo_text": emo_text,
-            "emo_audio_base64": emo_audio_base64,
+            "emo_audio_base64": await self._download_audio_as_base64(emo_audio_url),
             "emotion_vector": emotion_vector,
             "emo_alpha": emo_alpha,
             "use_random": use_random
@@ -87,6 +88,24 @@ class IndexTTS2Service:
             except Exception as e:
                 logger.error(f"Error in IndexTTS2 synthesis: {e}")
                 raise
+
+    # (*** 新增辅助函数 ***)
+    async def _download_audio_as_base64(self, url: str) -> Optional[str]:
+        """从URL下载音频并编码为Base64"""
+        if not url:
+            return None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=30) as response:
+                    if response.status == 200:
+                        audio_bytes = await response.read()
+                        return base64.b64encode(audio_bytes).decode('utf-8')
+                    else:
+                        logger.error(f"Failed to download audio from {url}, status: {response.status}")
+                        return None
+        except Exception as e:
+            logger.error(f"Error downloading audio from {url}: {e}")
+            return None
 
 
 # 创建单例实例
