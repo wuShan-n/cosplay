@@ -56,13 +56,6 @@ class Character(Base):
     # TTS 引擎配置
     tts_engine = Column(String, default="edge_tts")  # 'edge_tts' 或 'indextts2'
     tts_config = Column(JSON, default={})  # 存储引擎特定的配置
-    # tts_config 示例:
-    # {
-    #   "voice_audio_base64": "...",  # IndexTTS2的音色参考
-    #   "emo_text": "开心地说",       # 默认情绪
-    #   "emo_alpha": 0.7,             # 情绪强度
-    #   "use_random": false           # 随机性
-    # }
 
     # 关系字段
     conversations = relationship("Conversation", back_populates="character", cascade="all, delete-orphan")
