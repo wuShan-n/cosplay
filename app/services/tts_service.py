@@ -2,7 +2,7 @@ import edge_tts
 import tempfile
 import os
 import logging
-from typing import Optional, Literal
+from typing import Optional, Literal, AsyncGenerator
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -28,33 +28,21 @@ class TTSService:
             self._indextts2_service = indextts2_service
         return self._indextts2_service
 
-    async def synthesize(
+    async def synthesize_stream(
             self,
             text: str,
             voice_id: str = "zh-CN-XiaoxiaoNeural",
-            engine: Optional[TTSEngine] = None,
-            **kwargs
-    ) -> bytes:
+    ) -> AsyncGenerator[bytes, None]:
         """
-        统一的TTS接口，支持多种引擎
-
-        参数:
-            text: 要合成的文本
-            voice_id: 音色ID
-            engine: TTS引擎类型，None则使用默认引擎
-            **kwargs: 传递给具体引擎的额外参数
-
+        流式TTS接口，逐块生成音频数据
         返回:
-            合成的音频数据(bytes)
+            一个异步生成器，用于逐块产出音频数据(bytes)
         """
-        engine = engine or self.default_engine
 
-        if engine == TTSEngine.EDGE_TTS:
-            return await self._synthesize_edge_tts(text, voice_id)
-        elif engine == TTSEngine.INDEXTTS2:
-            return await self._synthesize_indextts2(text,  **kwargs)
-        else:
-            raise ValueError(f"Unsupported TTS engine: {engine}")
+        communicate = edge_tts.Communicate(text, voice_id)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                yield chunk["data"]
 
     async def _synthesize_edge_tts(
             self,
@@ -78,32 +66,6 @@ class TTSService:
         finally:
             os.unlink(tmp_path)
 
-    async def _synthesize_indextts2(
-            self,
-            text: str,
-            **kwargs
-    ) -> bytes:
-        """
-        使用IndexTTS2合成语音
-
-        额外参数通过kwargs传递:
-            - voice_audio_base64: 音色参考音频
-            - emo_text: 情绪文本
-            - emo_audio_base64: 情绪音频
-            - emotion_vector: 情绪向量
-            - emo_alpha: 情绪强度
-            - use_random: 随机性
-        """
-        logger.debug(f"Using IndexTTS2 to synthesize {len(text)} characters")
-        return await self.indextts2_service.synthesize(
-            text=text,
-            **kwargs
-        )
-
-    def set_default_engine(self, engine: TTSEngine):
-        """设置默认TTS引擎"""
-        self.default_engine = engine
-        logger.info(f"Default TTS engine set to: {engine}")
 
 
 # 创建单例实例

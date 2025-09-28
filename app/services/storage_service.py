@@ -24,8 +24,8 @@ class StorageService:
         if ret:
             # 构造公有URL
             public_url = f"{self.domain}/{filename}"
-            # 生成私有访问URL，有效期为3600秒 (1小时)
-            signed_url = self.auth.private_download_url(public_url, expires=3600)
+            # 生成私有访问URL
+            signed_url = self.auth.private_download_url(public_url, expires=30 * 24 * 60 * 60)
             return signed_url
         else:
             raise Exception(f"Upload failed: {info}")
@@ -43,8 +43,8 @@ class StorageService:
         if ret:
             # 构造公有URL
             public_url = f"{self.domain}/{filename}"
-            # 生成私有访问URL，有效期为3600秒 (1小时)
-            signed_url = self.auth.private_download_url(public_url, expires=3600)
+            # 生成私有访问URL
+            signed_url = self.auth.private_download_url(public_url, expires=30 * 24 * 60 * 60)
             return signed_url
         else:
             raise Exception(f"Upload failed: {info}")
@@ -67,8 +67,8 @@ class StorageService:
         if ret:
             # 构造公有URL
             public_url = f"{self.domain}/{filename}"
-            # 生成私有访问URL，有效期为3600秒 (1小时)
-            signed_url = self.auth.private_download_url(public_url, expires=3600)
+            # 生成私有访问URL
+            signed_url = self.auth.private_download_url(public_url, expires=30 * 24 * 60 * 60)
             return signed_url
         else:
             raise Exception(f"Upload failed: {info}")

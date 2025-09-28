@@ -109,7 +109,7 @@
 <body>
 
 <div class="container">
-    <h1>WebSocket 测试客户端</h1>
+    <h1>WebSocket 测试客户端 (流式音频版)</h1>
 
     <div class="control-group">
         <h2>1. 连接</h2>
@@ -125,9 +125,6 @@
         <h2>2. 发送消息</h2>
         <label for="message">消息:</label>
         <textarea id="message" placeholder="在此输入您的消息..."></textarea>
-        <br><br>
-        <input type="checkbox" id="needAudio" checked>
-        <label for="needAudio">请求语音</label>
         <br><br>
         <button id="sendTextBtn" disabled>发送文本</button>
         <button id="recordBtn" class="record-btn" disabled>录制音频</button>
@@ -147,7 +144,6 @@
     const recordBtn = document.getElementById('recordBtn');
     const conversationIdInput = document.getElementById('conversationId');
     const messageInput = document.getElementById('message');
-    const needAudioCheckbox = document.getElementById('needAudio');
     const statusEl = document.getElementById('status');
     const logEl = document.getElementById('log');
     const audioPlayer = document.getElementById('audioPlayer');
@@ -156,11 +152,95 @@
     let mediaRecorder = null;
     let audioChunks = [];
     let isRecording = false;
+    let isLoadingHistory = false;
+
+    // ✨ 新增: 流式音频播放器类
+    class StreamingAudioPlayer {
+    constructor() {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        this.audioQueue = [];
+        this.isPlaying = false;
+        this.lastSource = null;
+        // ✨ 新增: 定义一个缓冲阈值。只有当队列中的音频块数量达到这个值时才开始播放。
+        // 设置为 1 意味着收到第一个就播（无缓冲），设置为 2 意味着缓存一个再播。
+        // 2 是一个比较安全和折中的值。
+        this.BUFFER_THRESHOLD = 2;
+    }
+
+    async addToQueue(base64Data) {
+        try {
+            const binaryString = window.atob(base64Data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const arrayBuffer = bytes.buffer;
+
+            const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+            this.audioQueue.push(audioBuffer);
+
+            // ✨ 修改: 调用播放逻辑时检查缓冲
+            this.playFromQueue();
+        } catch (error) {
+            console.error("音频解码失败:", error);
+            logMessage('ERROR', '一个音频片段解码失败，可能导致播放中断。');
+        }
+    }
+
+    playFromQueue() {
+        // ✨ 修改: 增加缓冲判断
+        // 如果正在播放，或者队列中的音频块数量未达到缓冲阈值，则不播放
+        if (this.isPlaying || this.audioQueue.length < this.BUFFER_THRESHOLD) {
+            // 如果这是第一次播放（isPlaying为false），但缓冲未满，我们特例允许播放第一个块，避免初始延迟过长
+            if (this.isPlaying || this.audioQueue.length === 0 || this.lastSource !== null) {
+                 return;
+            }
+        }
+
+        if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume();
+        }
+
+        this.isPlaying = true;
+        const audioBuffer = this.audioQueue.shift();
+        const source = this.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.audioContext.destination);
+
+        source.onended = () => {
+            this.isPlaying = false;
+            // 播放结束后，立即尝试播放队列中的下一个
+            this.playFromQueue();
+        };
+
+        source.start(0);
+        this.lastSource = source;
+    }
+
+    stop() {
+        // stop 函数保持不变
+        if (this.lastSource) {
+            this.lastSource.onended = null;
+            try {
+                this.lastSource.stop();
+            } catch(e) {
+                // Ignore errors
+            }
+        }
+        this.audioQueue = [];
+        this.isPlaying = false;
+        this.lastSource = null; // ✨ 新增: 重置 lastSource 状态
+    }
+}
+
+    // ✨ 新增: 创建播放器实例
+    const streamingPlayer = new StreamingAudioPlayer();
+
 
     function logMessage(type, content) {
         const entry = document.createElement('div');
         entry.classList.add('log-entry');
-
         const meta = document.createElement('span');
         meta.classList.add('log-meta');
 
@@ -174,9 +254,9 @@
             case 'AI':
                 meta.textContent = 'AI: ';
                 text.classList.add('ai-msg');
-                return; // AI 消息由 appendToLastLog 处理
+                return; // AI消息由 appendToLastLog 处理
             case 'TRANSCRIPTION':
-                meta.textContent = '语音转写: ';
+                meta.textContent = '语音/文本转写: ';
                 text.classList.add('user-msg');
                 break;
             case 'SYSTEM':
@@ -198,7 +278,6 @@
 
     function appendToLastLog(chunk) {
         let lastEntry = logEl.lastElementChild;
-        // 检查最后一条日志是否来自 AI，如果不是，则创建新条目
         if (!lastEntry || !lastEntry.querySelector('.ai-msg')) {
             lastEntry = document.createElement('div');
             lastEntry.classList.add('log-entry');
@@ -246,6 +325,7 @@
         };
 
         ws.onmessage = (event) => {
+            // ✨ 修改: onmessage 逻辑
             try {
                 const data = JSON.parse(event.data);
 
@@ -255,22 +335,90 @@
                 }
 
                 switch (data.type) {
+                     case 'history':
+                        if (data.messages.length === 0) {
+                             if(isLoadingHistory) logMessage('SYSTEM', '没有更早的历史消息了。');
+                             isLoadingHistory = false;
+                             return;
+                        }
+
+                        const renderMessage = (msg) => {
+                            const entry = document.createElement('div');
+                            entry.classList.add('log-entry');
+                            entry.dataset.createdAt = msg.created_at;
+
+                            const meta = document.createElement('span');
+                            meta.classList.add('log-meta');
+
+                            const text = document.createElement('span');
+
+                            if (msg.role === 'user') {
+                                meta.textContent = '您: ';
+                                text.classList.add('user-msg');
+                            } else if (msg.role === 'assistant') {
+                                meta.textContent = 'AI: ';
+                                text.classList.add('ai-msg');
+                            } else {
+                                meta.textContent = `${msg.role}: `;
+                            }
+
+                            text.textContent = msg.content;
+                            entry.appendChild(meta);
+                            entry.appendChild(text);
+
+                            if (msg.role === 'assistant' && msg.audio_url) {
+                                const historyAudioPlayer = document.createElement('audio');
+                                historyAudioPlayer.controls = true;
+                                historyAudioPlayer.src = msg.audio_url;
+                                historyAudioPlayer.style.width = '100%';
+                                historyAudioPlayer.style.marginTop = '5px';
+                                entry.appendChild(historyAudioPlayer);
+                            }
+                            return entry;
+                        };
+
+                        if (!isLoadingHistory) {
+                            logEl.innerHTML = '';
+                            logMessage('SYSTEM', `成功加载 ${data.messages.length} 条历史消息。`);
+                            data.messages.forEach(msg => {
+                                logEl.appendChild(renderMessage(msg));
+                            });
+                            logEl.scrollTop = logEl.scrollHeight;
+                        } else {
+                            logMessage('SYSTEM', `加载了 ${data.messages.length} 条更早的消息。`);
+                            const oldScrollHeight = logEl.scrollHeight;
+                            const fragment = document.createDocumentFragment();
+                            data.messages.forEach(msg => {
+                                fragment.appendChild(renderMessage(msg));
+                            });
+                            logEl.prepend(fragment);
+                            logEl.scrollTop = logEl.scrollHeight - oldScrollHeight;
+                            isLoadingHistory = false;
+                        }
+                        break;
                     case 'text_stream':
                         appendToLastLog(data.content);
+                        break;
+                    case 'audio_stream': // ✨ 新增: 处理音频流块
+                        streamingPlayer.addToQueue(data.data);
                         break;
                     case 'transcription':
                         logMessage('TRANSCRIPTION', data.content);
                         break;
-                    case 'audio':
-                        logMessage('SYSTEM', `收到音频 URL: ${data.url}`);
+                    case 'audio': // ✨ 修改: 现在这个类型代表最终的完整音频URL
+                    case 'audio_complete':
+                        logMessage('SYSTEM', `收到完整音频 URL: ${data.url}`);
                         audioPlayer.src = data.url;
-                        audioPlayer.play();
+                        break;
+                    case 'audio_error': // ✨ 新增: 处理音频错误
+                        logMessage('ERROR', data.message);
                         break;
                     default:
                         logMessage('SYSTEM', `收到未知消息类型: ${JSON.stringify(data)}`);
                 }
             } catch (e) {
                 logMessage('ERROR', `解析消息失败: ${event.data}`);
+                isLoadingHistory = false;
                 console.error(e);
             }
         };
@@ -296,6 +444,10 @@
     };
 
     sendTextBtn.onclick = () => {
+        // ✨ 修改: 增加中断音频逻辑
+        streamingPlayer.stop();
+        audioPlayer.src = ''; // 清空旧的完整音频
+
         const content = messageInput.value.trim();
         if (!content) {
             alert('消息不能为空。');
@@ -305,7 +457,6 @@
             const message = {
                 type: 'text',
                 content: content,
-                need_audio: needAudioCheckbox.checked
             };
             ws.send(JSON.stringify(message));
             logMessage('USER', content);
@@ -317,13 +468,15 @@
 
     recordBtn.onclick = async () => {
         if (isRecording) {
-            // 停止录音
             mediaRecorder.stop();
             recordBtn.textContent = '录制音频';
             recordBtn.classList.remove('recording');
             isRecording = false;
         } else {
-            // 开始录音
+            // ✨ 修改: 增加中断音频逻辑
+            streamingPlayer.stop();
+            audioPlayer.src = ''; // 清空旧的完整音频
+
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
@@ -364,7 +517,22 @@
         }
     };
 
-    // 初始化 UI 状态
+    logEl.onscroll = () => {
+        if (logEl.scrollTop === 0 && !isLoadingHistory && ws) {
+            // ✨ 修正：使用 querySelector 精确查找带有时间戳的第一个元素
+            const oldestMessageEl = logEl.querySelector('[data-created-at]');
+            if (oldestMessageEl && oldestMessageEl.dataset.createdAt) {
+                const oldestTimestamp = oldestMessageEl.dataset.createdAt;
+                isLoadingHistory = true;
+                logMessage('SYSTEM', '滚动到顶部，正在加载更多历史记录...');
+                ws.send(JSON.stringify({
+                    type: 'load_history',
+                    before_created_at: oldestTimestamp
+                }));
+            }
+        }
+    };
+
     updateUIState(false);
 </script>
 

@@ -2,9 +2,12 @@
 import base64
 import logging
 import os
+import re
 from typing import Optional, List
 
 import aiohttp
+
+from app.models import Character
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,64 @@ class IndexTTS2Service:
         except Exception as e:
             logger.error(f"Error downloading audio from {url}: {e}")
             return None
+
+
+    def extract_emotion_and_clean_text(self,text):
+        """
+        从文本中提取情感/动作描述，并返回清理后的文本。
+        例如: "好的*开心*" -> ("开心", "好的")
+        """
+        # 正则表达式，用于查找并捕获 *...* 或 (...) 等模式中的内容
+        pattern = r'[\*#【】\[\]\(\)]([^\*#【】\[\]\(\)]*)[\*#【】\[\]\(\)]'
+
+        match = re.search(pattern, text)
+
+        emotion = None
+        clean_text = text
+
+        if match:
+            # 提取捕获组的内容作为情感指令
+            emotion = match.group(1)
+            # 从原始文本中移除整个匹配项，得到纯净文本
+            clean_text = re.sub(pattern, '', text).strip()
+
+        return emotion, clean_text
+
+    async def synthesize_from_character(self, text: str, character: Character) -> bytes:
+        """
+        根据角色配置和输入文本，提取情感并合成语音。
+        这是一个高层级的方法，封装了从角色准备参数到调用的完整逻辑。
+
+        参数:
+            text: 完整的AI生成文本，可能包含情感标记。
+            character: 角色对象，包含TTS引擎和配置信息。
+
+        返回:
+            合成的音频数据(bytes)
+        """
+        tts_config = character.tts_config or {}
+
+        # 1. 从文本中提取情感指令
+        extracted_emotion, clean_text = self.extract_emotion_and_clean_text(text)
+
+        # 2. 决定最终使用的情感文本
+        # 优先使用从文本中实时提取出的情感
+        final_emo_text = extracted_emotion or tts_config.get("emo_text")
+
+        if extracted_emotion:
+            logger.info(f"从文本中提取到情感指令: {extracted_emotion}")
+
+        # 3. 调用底层的合成方法
+        audio_data = await self.synthesize(
+            text=text,  # IndexTTS2 API通常需要包含情感标记的原始文本
+            voice_audio_url=tts_config.get("voice_audio_url"),
+            emo_audio_url=tts_config.get("emo_audio_url"),
+            emo_text=final_emo_text,
+            emo_alpha=tts_config.get("emo_alpha", 0.7),
+            emotion_vector=tts_config.get("emotion_vector"),
+            use_random=tts_config.get("use_random", False)
+        )
+        return audio_data
 
 
 # 创建单例实例

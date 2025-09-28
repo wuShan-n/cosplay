@@ -154,16 +154,15 @@ class RAGService:
             # 加载文档
             documents = loader.load()
 
-            # 分割文档
-            chunks_data = []
-            for doc in documents:
-                splits = self.text_splitter.split_documents([doc])
-                for idx, chunk in enumerate(splits):
-                    chunks_data.append({
-                        "content": chunk.page_content,
-                        "metadata": chunk.metadata,
-                        "index": len(chunks_data)
-                    })
+            # 一次性分割所有文档
+            all_splits = self.text_splitter.split_documents(documents)
+
+            # 使用列表推导式高效生成数据
+            chunks_data = [{
+                "content": chunk.page_content,
+                "metadata": chunk.metadata,
+                "index": idx
+            } for idx, chunk in enumerate(all_splits)]
 
             return chunks_data
 
@@ -205,65 +204,7 @@ class RAGService:
             await db.flush()
             logger.info(f"Saved chunks {batch_start + 1}-{batch_end}")
 
-    async def link_knowledge_to_character(
-            self,
-            db: AsyncSession,
-            character_id: int,
-            document_id: int
-    ) -> bool:
-        """将知识库关联到角色 - 使用异步查询"""
-        # 使用异步查询获取角色及其知识库
-        result = await db.execute(
-            select(Character)
-            .where(Character.id == character_id)
-            .options(selectinload(Character.knowledge_documents))
-        )
-        character = result.scalar_one_or_none()
 
-        # 使用异步 get
-        document = await db.get(KnowledgeDocument, document_id)
-
-        if not character or not document:
-            logger.error(f"Character {character_id} or document {document_id} not found")
-            return False
-
-        if document not in character.knowledge_documents:
-            character.knowledge_documents.append(document)
-            character.use_knowledge_base = True
-            await db.commit()
-            logger.info(f"Linked document {document_id} to character {character_id}")
-
-        return True
-
-    async def unlink_knowledge_from_character(
-            self,
-            db: AsyncSession,
-            character_id: int,
-            document_id: int
-    ) -> bool:
-        """解除知识库与角色的关联 - 使用异步查询"""
-        # 使用异步查询获取角色及其知识库
-        result = await db.execute(
-            select(Character)
-            .where(Character.id == character_id)
-            .options(selectinload(Character.knowledge_documents))
-        )
-        character = result.scalar_one_or_none()
-
-        # 使用异步 get
-        document = await db.get(KnowledgeDocument, document_id)
-
-        if not character or not document:
-            return False
-
-        if document in character.knowledge_documents:
-            character.knowledge_documents.remove(document)
-            if not character.knowledge_documents:
-                character.use_knowledge_base = False
-            await db.commit()
-            logger.info(f"Unlinked document {document_id} from character {character_id}")
-
-        return True
 
     async def search_knowledge(
             self,
@@ -283,37 +224,56 @@ class RAGService:
 
         if not character or not character.knowledge_documents:
             return []
-
         document_ids = [doc.id for doc in character.knowledge_documents]
 
-        # 生成查询向量
+        # 步骤 2: 生成查询向量
         query_embedding = await self.create_embedding(query)
 
-        # 向量相似度搜索
+        # 步骤 3: 构建并执行优化的向量搜索查询
+
+        # pgvector 的余弦距离操作符 '<=>'，距离越小表示越相似
+        distance_op = KnowledgeChunk.embedding.cosine_distance(query_embedding)
+
+        # 子查询: 仅对 KnowledgeChunk 表进行操作，快速利用索引找出最相似的 k 个块
+        subquery = (
+            select(
+                KnowledgeChunk.id.label("chunk_id"),
+                distance_op.label("distance")
+            )
+            .where(KnowledgeChunk.document_id.in_(document_ids))
+            .order_by(distance_op)
+            .limit(k)
+            .subquery('nearest_chunks')
+        )
+
+        # 主查询: 将子查询的结果与父表进行JOIN，获取完整的 chunk 内容和文档元数据
         stmt = (
             select(
                 KnowledgeChunk.content,
                 KnowledgeChunk.chunk_metadata,
                 KnowledgeDocument.title.label("doc_title"),
                 KnowledgeDocument.description.label("doc_description"),
-                KnowledgeChunk.embedding.l2_distance(query_embedding).label("distance")
+                subquery.c.distance
             )
+            .join(subquery, KnowledgeChunk.id == subquery.c.chunk_id)
             .join(KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id)
-            .where(KnowledgeDocument.id.in_(document_ids))
-            .order_by(KnowledgeChunk.embedding.l2_distance(query_embedding))
-            .limit(k)
+            .order_by(subquery.c.distance)  # 保证最终输出的顺序
         )
 
         result = await db.execute(stmt)
 
+        # 步骤 4: 组装并返回结果
         chunks = []
-        for row in result:
+        for row in result.mappings():
+            # 将余弦距离 (0 到 2) 转换为更直观的相似度分数 (通常在 0 到 1 之间)
+            # 1 - distance 是一个简单且有效的转换方式
+            relevance_score = 1 - row.distance
             chunks.append({
                 "content": row.content,
                 "metadata": row.chunk_metadata,
                 "doc_title": row.doc_title,
                 "doc_description": row.doc_description,
-                "relevance_score": 1 - row.distance  # 转换为相似度分数
+                "relevance_score": relevance_score
             })
 
         return chunks
@@ -337,36 +297,6 @@ class RAGService:
         context_parts.append("\n请基于上述知识，结合角色设定来回答用户的问题。")
 
         return "\n".join(context_parts)
-
-    async def get_public_knowledge_documents(
-            self,
-            db: AsyncSession,
-            skip: int = 0,
-            limit: int = 20
-    ) -> Sequence[KnowledgeDocument]:
-        """获取公开的知识库列表"""
-        result = await db.execute(
-            select(KnowledgeDocument)
-            .where(KnowledgeDocument.is_public == True)
-            .order_by(KnowledgeDocument.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return result.scalars().all()
-
-    async def get_character_knowledge_documents(
-            self,
-            db: AsyncSession,
-            character_id: int
-    ) -> List[KnowledgeDocument]:
-        """获取角色关联的所有知识库 - 使用异步查询"""
-        result = await db.execute(
-            select(Character)
-            .where(Character.id == character_id)
-            .options(selectinload(Character.knowledge_documents))
-        )
-        character = result.scalar_one_or_none()
-        return character.knowledge_documents if character else []
 
 
 # 创建单例实例
